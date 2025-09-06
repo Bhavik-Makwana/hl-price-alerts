@@ -2,6 +2,7 @@ use rusqlite::{Connection, Result};
 use chrono::{DateTime, Utc};
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use teloxide::types::ChatId;
 
 #[derive(Debug)]
 pub struct AlertTable {
@@ -15,6 +16,18 @@ pub struct AlertTable {
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub cooldown_until: DateTime<Utc>,
+}
+
+impl std::fmt::Display for AlertTable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "🔔 {} at ${:.2} (created {})",
+            self.coin,
+            self.price,
+            self.created_at.format("%Y-%m-%d %H:%M:%S")
+        )
+    }
 }
 
 #[derive(Clone)]
@@ -49,12 +62,12 @@ impl Database {
         Ok(())
     }
 
-    pub async fn insert_alert(&self, public_key: &str, chat_id: i64, coin: &str, token: &str, price: f64) -> Result<()> {
+    pub async fn insert_alert(&self, public_key: &str, chat_id: ChatId, coin: &str, token: &str, price: f64) -> Result<()> {
         let conn_guard = self.conn.lock().await;
         conn_guard.execute(r#"
         INSERT INTO alerts (public_key, chat_id, coin, token, price, alerted, created_at, updated_at, cooldown_until) 
         VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-        "#, (public_key, chat_id, coin, token, price, false))?;
+        "#, (public_key, chat_id.0, coin, token, price, false))?;
         Ok(())
     }
 
@@ -70,9 +83,29 @@ impl Database {
                 token: row.get(4)?,
                 price: row.get(5)?,
                 alerted: row.get(6)?,
-                created_at: row.get(7)?,
-                updated_at: row.get(8)?,
-                cooldown_until: row.get(9)?,
+                created_at: row.get::<_, DateTime<Utc>>(7)?,
+                updated_at: row.get::<_, DateTime<Utc>>(8)?,
+                cooldown_until: row.get::<_, DateTime<Utc>>(9).unwrap_or(DateTime::<Utc>::from_timestamp(0, 0).unwrap()),
+            })
+        })?.collect::<Result<Vec<AlertTable>>>()?;
+        Ok(alerts)
+    }
+
+    pub async fn get_all_alerts_for_chat(&self, chat_id: ChatId) -> Result<Vec<AlertTable>> {
+        let conn_guard = self.conn.lock().await;
+        let mut stmt = conn_guard.prepare("SELECT * FROM alerts WHERE chat_id = ?")?;
+        let alerts = stmt.query_map([chat_id.0], |row| {
+            Ok(AlertTable {
+                id: row.get(0)?,
+                public_key: row.get(1)?,
+                chat_id: row.get(2)?,
+                coin: row.get(3)?,
+                token: row.get(4)?,
+                price: row.get(5)?,
+                alerted: row.get(6)?,
+                created_at: row.get::<_, DateTime<Utc>>(7)?,
+                updated_at: row.get::<_, DateTime<Utc>>(8)?,
+                cooldown_until: row.get::<_, DateTime<Utc>>(9).unwrap_or(DateTime::<Utc>::from_timestamp(0, 0).unwrap()),
             })
         })?.collect::<Result<Vec<AlertTable>>>()?;
         Ok(alerts)

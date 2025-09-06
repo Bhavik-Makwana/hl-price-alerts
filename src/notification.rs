@@ -2,28 +2,29 @@ use teloxide::{prelude::*, utils::command::BotCommands};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use crate::db::AlertTable;
+use crate::alerts::AlertService;
 
 #[derive(BotCommands, Clone)]
 #[command(rename_rule = "lowercase", description = "These commands are supported:")]
 pub enum Command {
     #[command(description = "display this text.")]
     Help,
-    #[command(description = "Set alert price.")]
-    Alert(f64),
+    #[command(description = "Display all alerts.")]
+    Alert,
     #[command(parse_with = "split", alias = "ua", hide_aliases)]
     SetAlert{coin: String, price: f64},
 }
 
 pub struct NotificationService {
     bot: Bot,
-    alert_price: Arc<Mutex<f64>>,
+    alert_service: AlertService,
 }
 
 impl NotificationService {
-    pub fn new(bot: Bot, initial_price: f64) -> Self {
+    pub fn new(bot: Bot, alert_service: AlertService) -> Self {
         Self {
             bot,
-            alert_price: Arc::new(Mutex::new(initial_price)),
+            alert_service,
         }
     }
 
@@ -32,14 +33,15 @@ impl NotificationService {
             Command::Help => {
                 self.bot.send_message(msg.chat.id, Command::descriptions().to_string()).await?
             }
-            Command::Alert(price) => {
-                let mut alert_price_guard = self.alert_price.lock().await;
-                *alert_price_guard = price;
-                self.bot.send_message(msg.chat.id, format!("Alert price set to {price}.")).await?
+            Command::Alert => {
+                // let mut alert_price_guard = self.alert_price.lock().await;
+                // *alert_price_guard = price;
+                let alerts = self.alert_service.get_all_alerts_for_chat(msg.chat.id).await.unwrap();
+                let alerts_buffer = alerts.iter().map(|alert| alert.to_string()).collect::<Vec<String>>().join("\n");
+                self.bot.send_message(msg.chat.id, format!("Alerts: {alerts_buffer}")).await?
             }
             Command::SetAlert{coin, price} => {
-                let mut alert_price_guard = self.alert_price.lock().await;
-                *alert_price_guard = price;
+                self.alert_service.create_alert("0x00",msg.chat.id, &coin, price).await.unwrap();
                 self.bot.send_message(msg.chat.id, format!("Alert price set to {price} for {coin}.")).await?
             }
         };
@@ -53,10 +55,6 @@ impl NotificationService {
             format!("🔔 Price Alert: {} is at {}", alert.coin, alert.price)
         ).await?;
         Ok(())
-    }
-
-    pub fn get_alert_price(&self) -> Arc<Mutex<f64>> {
-        self.alert_price.clone()
     }
 
     pub fn get_bot(&self) -> Bot {
