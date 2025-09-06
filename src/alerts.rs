@@ -1,16 +1,19 @@
 use crate::db::{Database, AlertTable};
-use hyperliquid_rust_sdk::{BaseUrl, InfoClient};
+use hyperliquid_rust_sdk::InfoClient;
 use rusqlite::Result;
 use teloxide::types::ChatId;
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 #[derive(Clone)]
 pub struct AlertService {
     db: Database,
+    info_client: Arc<Mutex<InfoClient>>,
 }
 
 impl AlertService {
-    pub fn new(db: Database) -> Self {
-        Self { db }
+    pub fn new(db: Database, info_client: Arc<Mutex<InfoClient>>) -> Self {
+        Self { db, info_client }
     }
 
     pub async fn get_triggered_alerts(&self, mark_px: f64) -> Result<Vec<AlertTable>> {
@@ -49,8 +52,7 @@ impl AlertService {
     }
 
     async fn get_token(&self, coin: &str) -> anyhow::Result<String> {
-        let info_client = InfoClient::new(None, Some(BaseUrl::Mainnet)).await.unwrap();
-        let spot_meta = info_client.spot_meta().await?;
+        let spot_meta = self.info_client.lock().await.spot_meta().await?;
         let universe = spot_meta.universe;
         let tokens = spot_meta.tokens;
         let token_index = tokens.iter().find(|t| t.name == coin).unwrap().index;

@@ -71,6 +71,15 @@ impl Database {
         Ok(())
     }
 
+    pub async fn get_all_unique_tokens(&self) -> Result<Vec<String>> {
+        let conn_guard = self.conn.lock().await;
+        let mut stmt = conn_guard.prepare("SELECT DISTINCT token FROM alerts")?;
+        let tokens = stmt.query_map([], |row| {
+            Ok(row.get(0)?)
+        })?.collect::<Result<Vec<String>>>()?;
+        Ok(tokens)
+    }
+    
     pub async fn get_all_alerts(&self) -> Result<Vec<AlertTable>> {
         let conn_guard = self.conn.lock().await;
         let mut stmt = conn_guard.prepare("SELECT * FROM alerts")?;
