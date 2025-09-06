@@ -49,11 +49,15 @@ Alerts trigger when the current price is within 0.1% of your target price:
 - Upper bound: `current_price * 1.001`
 
 ## TODO
-
-[] Delete alerts
-    [] remove subscriptions if token is no longer monitored
-[] Smart alerts
-    [] Allow people to submit their public address to auto generate alerts based on their perps positions e.g. if they are within 10% range of being liquidated or their SL/TP prices
-[] Measure performance
-[] Add a message queue (totally unncessary for the current scale but should be a fun task)
-[] Cron alerts
+- [x] Set alerts via telegram
+- [x] Receive notifications via telegram
+- [x] Subscribe to multiple tokens
+- [x] Isolate alerts to chat ids
+- [ ] Isolate alerts to addresses  
+- [ ] Delete alerts
+    - [ ] remove subscriptions if token is no longer monitored
+- [ ] Smart alerts
+  - [ ] Allow people to submit their public address to auto generate alerts based on their perps positions e.g. if they are within 10% range of being liquidated or their SL/TP prices
+- [ ] Measure performance
+- [ ] Add a message queue (totally unnecessary for the current scale but should be a fun task)
+- [ ] Cron alerts
