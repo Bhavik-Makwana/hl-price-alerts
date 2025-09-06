@@ -14,8 +14,8 @@ impl AlertService {
     }
 
     pub async fn get_triggered_alerts(&self, mark_px: f64) -> Result<Vec<AlertTable>> {
-        let lower_alert_price = mark_px * 0.95;
-        let upper_alert_price = mark_px * 1.05;
+        let lower_alert_price = mark_px * 0.999;
+        let upper_alert_price = mark_px * 1.001;
         self.db.get_triggered_alerts(lower_alert_price, upper_alert_price).await
     }
 
