@@ -1,8 +1,10 @@
-use rusqlite::{Connection, Result};
+use rusqlite::{Connection, Result, params};
 use chrono::{DateTime, Utc};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use teloxide::types::ChatId;
+use cron_parser::parse;
+use std::str::FromStr;
 
 #[derive(Debug)]
 pub struct AlertTable {
@@ -18,6 +20,20 @@ pub struct AlertTable {
     pub cooldown_until: DateTime<Utc>,
 }
 
+#[derive(Debug)]
+pub struct CronAlert {
+    pub id: i64,
+    pub chat_id: i64,
+    pub coin: String,
+    pub token: String,
+    pub cron_schedule: String,
+    pub is_active: bool,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub last_triggered: Option<DateTime<Utc>>,
+    pub next_trigger: Option<DateTime<Utc>>,
+}
+
 impl std::fmt::Display for AlertTable {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
@@ -26,6 +42,20 @@ impl std::fmt::Display for AlertTable {
             self.coin,
             self.price,
             self.created_at.format("%Y-%m-%d %H:%M:%S")
+        )
+    }
+}
+
+impl std::fmt::Display for CronAlert {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "⏰ {} {} (schedule: {}) (created {}) (next trigger: {})",
+            self.coin,
+            self.token,
+            self.cron_schedule,
+            self.created_at.format("%Y-%m-%d %H:%M:%S"),
+            self.next_trigger.unwrap().format("%Y-%m-%d %H:%M:%S")
         )
     }
 }
@@ -57,6 +87,21 @@ impl Database {
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             cooldown_until TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        "#, ())?;
+        
+        conn_guard.execute(r#"
+        CREATE TABLE IF NOT EXISTS cron_alerts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            chat_id INTEGER,
+            coin TEXT,
+            token TEXT,
+            cron_schedule TEXT,
+            is_active BOOLEAN DEFAULT TRUE,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            last_triggered TIMESTAMP,
+            next_trigger TIMESTAMP
         )
         "#, ())?;
         Ok(())
@@ -156,5 +201,103 @@ impl Database {
 
     pub fn get_connection(&self) -> Arc<Mutex<Connection>> {
         self.conn.clone()
+    }
+
+    // Cron alert methods
+    pub async fn insert_cron_alert(&self, chat_id: ChatId, coin: &str, token: &str, cron_schedule: &str) -> Result<()> {
+        let conn_guard = self.conn.lock().await;
+        let next_trigger = parse(cron_schedule, &chrono::Utc::now()).unwrap();
+        conn_guard.execute(r#"
+        INSERT INTO cron_alerts (chat_id, coin, token, cron_schedule, is_active, created_at, updated_at, next_trigger) 
+        VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ?)
+        "#, (chat_id.0, coin, token, cron_schedule, true, next_trigger))?;
+        Ok(())
+    }
+
+    pub async fn get_all_cron_alerts(&self) -> Result<Vec<CronAlert>> {
+        let conn_guard = self.conn.lock().await;
+        let mut stmt = conn_guard.prepare("SELECT * FROM cron_alerts WHERE is_active = true")?;
+        let alerts = stmt.query_map([], |row| {
+            Ok(CronAlert {
+                id: row.get(0)?,
+                chat_id: row.get(1)?,
+                coin: row.get(2)?,
+                token: row.get(3)?  ,
+                cron_schedule: row.get(4)?,
+                is_active: row.get(5)?,
+                created_at: row.get::<_, DateTime<Utc>>(6)?,
+                updated_at: row.get::<_, DateTime<Utc>>(7)?,
+                last_triggered: row.get::<_, Option<DateTime<Utc>>>(8)?,
+                next_trigger: row.get::<_, Option<DateTime<Utc>>>(9)?,
+            })
+        })?.collect::<Result<Vec<CronAlert>>>()?;
+        Ok(alerts)
+    }
+
+    pub async fn get_cron_alerts_for_chat(&self, chat_id: ChatId) -> Result<Vec<CronAlert>> {
+        let conn_guard = self.conn.lock().await;
+        let mut stmt = conn_guard.prepare("SELECT * FROM cron_alerts WHERE chat_id = ? AND is_active = true")?;
+        let alerts = stmt.query_map([chat_id.0], |row| {
+            Ok(CronAlert {
+                id: row.get(0)?,
+                chat_id: row.get(1)?,
+                coin: row.get(2)?,
+                token: row.get(3)?,
+                cron_schedule: row.get(4)?,
+                is_active: row.get(5)?,
+                created_at: row.get::<_, DateTime<Utc>>(6)?,
+                updated_at: row.get::<_, DateTime<Utc>>(7)?,
+                last_triggered: row.get::<_, Option<DateTime<Utc>>>(8)?,
+                next_trigger: row.get::<_, Option<DateTime<Utc>>>(9)?,
+            })
+        })?.collect::<Result<Vec<CronAlert>>>()?;
+        Ok(alerts)
+    }
+
+    pub async fn get_next_trigger_cron_alerts(&self) -> Result<Vec<CronAlert>> {
+        let conn_guard = self.conn.lock().await;
+        let mut stmt = conn_guard.prepare("SELECT * FROM cron_alerts WHERE next_trigger <= CURRENT_TIMESTAMP")?;
+        let alerts = stmt.query_map([], |row| {
+            Ok(CronAlert {
+                id: row.get(0)?,
+                chat_id: row.get(1)?,
+                coin: row.get(2)?,
+                token: row.get(3)?,
+                cron_schedule: row.get(4)?,
+                is_active: row.get(5)?,
+                created_at: row.get::<_, DateTime<Utc>>(6)?,
+                updated_at: row.get::<_, DateTime<Utc>>(7)?,
+                last_triggered: row.get::<_, Option<DateTime<Utc>>>(8)?,
+                next_trigger: row.get::<_, Option<DateTime<Utc>>>(9)?,
+            })
+        })?.collect::<Result<Vec<CronAlert>>>()?;
+        Ok(alerts)
+    }
+
+    pub async fn update_cron_alert_last_triggered(&self, alert_id: i64, next_trigger: DateTime<Utc>) -> Result<()> {
+        let conn_guard = self.conn.lock().await;
+        let mut stmt = conn_guard.prepare(r#"
+            UPDATE cron_alerts SET 
+            last_triggered = CURRENT_TIMESTAMP, 
+            updated_at = CURRENT_TIMESTAMP, 
+            next_trigger = ?
+            WHERE id = ?
+            "#)?;
+        stmt.execute(params![next_trigger, alert_id])?;
+        Ok(())
+    }
+
+    pub async fn deactivate_cron_alert(&self, alert_id: i64) -> Result<()> {
+        let conn_guard = self.conn.lock().await;
+        let mut stmt = conn_guard.prepare("UPDATE cron_alerts SET is_active = false, updated_at = CURRENT_TIMESTAMP WHERE id = ?")?;
+        stmt.execute([alert_id])?;
+        Ok(())
+    }
+
+    pub async fn delete_cron_alert(&self, alert_id: i64) -> Result<()> {
+        let conn_guard = self.conn.lock().await;
+        let mut stmt = conn_guard.prepare("DELETE FROM cron_alerts WHERE id = ?")?;
+        stmt.execute([alert_id])?;
+        Ok(())
     }
 }

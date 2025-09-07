@@ -1,8 +1,7 @@
 use teloxide::{prelude::*, utils::command::BotCommands};
-use std::sync::Arc;
-use tokio::sync::Mutex;
 use crate::db::AlertTable;
 use crate::alerts::AlertService;
+use crate::cron::CronService;
 
 #[derive(BotCommands, Clone)]
 #[command(rename_rule = "lowercase", description = "These commands are supported:")]
@@ -13,17 +12,25 @@ pub enum Command {
     Alert,
     #[command(parse_with = "split", alias = "ua", hide_aliases)]
     SetAlert{coin: String, price: f64},
+    #[command(description = "Display all cron alerts.")]
+    CronAlerts,
+    #[command(parse_with = "split", description = "Create a daily cron alert at 8am.")]
+    SetCronAlert{coin: String,schedule: String},
+    #[command(parse_with = "split", description = "Delete a cron alert by ID.")]
+    DeleteCronAlert{id: i64},
 }
 
 #[derive(Clone)]
 pub struct NotificationService {
     alert_service: AlertService,
+    cron_service: CronService,
 }
 
 impl NotificationService {
-    pub fn new(alert_service: AlertService) -> Self {
+    pub fn new(alert_service: AlertService, cron_service: CronService) -> Self {
         Self {
             alert_service,
+            cron_service,
         }
     }
 
@@ -42,6 +49,19 @@ impl NotificationService {
             Command::SetAlert{coin, price} => {
                 self.alert_service.create_alert("0x00",msg.chat.id, &coin, price).await.unwrap();
                 bot.send_message(msg.chat.id, format!("Alert price set to {price} for {coin}.")).await?
+            }
+            Command::CronAlerts => {
+                let cron_alerts = self.cron_service.get_cron_alerts_for_chat(msg.chat.id).await.unwrap();
+                let alerts_buffer = cron_alerts.iter().map(|alert| alert.to_string()).collect::<Vec<String>>().join("\n");
+                bot.send_message(msg.chat.id, format!("Cron Alerts:\n{alerts_buffer}")).await?
+            }
+            Command::SetCronAlert{coin, schedule} => {
+                self.cron_service.create_cron_alert(msg.chat.id, &coin, &schedule).await.unwrap();
+                bot.send_message(msg.chat.id, format!("Cron alert set with schedule {schedule} for {coin}.")).await?
+            }
+            Command::DeleteCronAlert{id} => {
+                self.cron_service.delete_cron_alert(id).await.unwrap();
+                bot.send_message(msg.chat.id, format!("Cron alert {id} deleted.")).await?
             }
         };
 

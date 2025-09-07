@@ -56,8 +56,7 @@ impl AlertService {
         let universe = spot_meta.universe;
         let tokens = spot_meta.tokens;
         let token_index = tokens.iter().find(|t| t.name == coin).unwrap().index;
-        let token = universe.iter().find(|t| t.index == token_index).unwrap().name.clone();
-        println!("Token: {token}");
+        let token = universe.iter().find(|t| t.tokens[0] == token_index).unwrap().name.clone();
         Ok(token)
     }
 }
