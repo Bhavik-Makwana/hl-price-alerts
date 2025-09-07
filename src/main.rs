@@ -4,7 +4,6 @@ use tokio::{sync::mpsc::unbounded_channel};
 use teloxide::prelude::*;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use chrono::Timelike;
 use backend::{
     db::Database,
     notification::{NotificationService, Command},
@@ -12,7 +11,6 @@ use backend::{
     cron::CronService,
 };
 use cron_parser::parse;
-use std::str::FromStr;
 
 
 #[tokio::main]
@@ -41,7 +39,7 @@ async fn main() {
         println!("Cron Alert: {cron_alert:?}");
     }
     
-    cron_service.create_cron_alert(ChatId(-4930044060), "HYPE", "* * * * *").await.unwrap();
+    // cron_service.create_cron_alert(ChatId(-4930044060), "HYPE", "* * * * *").await.unwrap();
     
     let cron_alerts = cron_service.get_all_cron_alerts().await.unwrap();
     for cron_alert in cron_alerts {
@@ -86,24 +84,24 @@ async fn main() {
                 info_client.lock().await.unsubscribe(subscription_id).await.unwrap();
             }
         }
-        // _ = async move {
-        //     while let Some(hyperliquid_rust_sdk::Message::ActiveSpotAssetCtx(order_updates)) = receiver.recv().await {
-        //         info!("Received order update data: {order_updates:?}");
-        //         let mark_px = order_updates.data.ctx.shared.mark_px.parse::<f64>().unwrap();
-        //         let alerts = alert_service_for_price_updates.get_triggered_alerts(mark_px).await.unwrap();
-        //         for alert in &alerts {
-        //             println!("Alert triggered: {alert:?}");
+        _ = async move {
+            while let Some(hyperliquid_rust_sdk::Message::ActiveSpotAssetCtx(order_updates)) = receiver.recv().await {
+                info!("Received order update data: {order_updates:?}");
+                let mark_px = order_updates.data.ctx.shared.mark_px.parse::<f64>().unwrap();
+                let alerts = alert_service_for_price_updates.get_triggered_alerts(mark_px).await.unwrap();
+                for alert in &alerts {
+                    println!("Alert triggered: {alert:?}");
                     
-        //             bot.send_message(teloxide::types::ChatId(alert.chat_id), format!("🔔 Price Alert: {} is at {}", alert.coin, alert.price)).await.unwrap();
-        //         }
-        //         alert_service_for_price_updates.set_alert_cooldowns(&alerts).await.unwrap();
-        //     }
-        // } => {
-        //     info!("Price monitoring stopped, unsubscribing from price updates");
-        //     for subscription_id in subscription_ids {
-        //         info_client.lock().await.unsubscribe(subscription_id).await.unwrap();
-        //     }
-        // }
+                    bot.send_message(teloxide::types::ChatId(alert.chat_id), format!("🔔 Price Alert: {} is at {}", alert.coin, alert.price)).await.unwrap();
+                }
+                alert_service_for_price_updates.set_alert_cooldowns(&alerts).await.unwrap();
+            }
+        } => {
+            info!("Price monitoring stopped, unsubscribing from price updates");
+            for subscription_id in subscription_ids {
+                info_client.lock().await.unsubscribe(subscription_id).await.unwrap();
+            }
+        }
         _ = async move {
             loop {
                 alert_service_for_cooldowns.reset_cooldowns().await.unwrap();

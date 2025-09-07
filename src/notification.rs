@@ -14,8 +14,8 @@ pub enum Command {
     SetAlert{coin: String, price: f64},
     #[command(description = "Display all cron alerts.")]
     CronAlerts,
-    #[command(parse_with = "split", description = "Create a daily cron alert at 8am.")]
-    SetCronAlert{coin: String,schedule: String},
+    #[command(parse_with = "split", description = "Create a cron alert at a specific time.")]
+    SetCronAlert{coin: String, schedule: String, time: String},
     #[command(parse_with = "split", description = "Delete a cron alert by ID.")]
     DeleteCronAlert{id: i64},
 }
@@ -55,9 +55,18 @@ impl NotificationService {
                 let alerts_buffer = cron_alerts.iter().map(|alert| alert.to_string()).collect::<Vec<String>>().join("\n");
                 bot.send_message(msg.chat.id, format!("Cron Alerts:\n{alerts_buffer}")).await?
             }
-            Command::SetCronAlert{coin, schedule} => {
-                self.cron_service.create_cron_alert(msg.chat.id, &coin, &schedule).await.unwrap();
-                bot.send_message(msg.chat.id, format!("Cron alert set with schedule {schedule} for {coin}.")).await?
+            Command::SetCronAlert{coin, schedule, time} => {
+                let cron_schedule = self.cron_service.create_schedule(&schedule, &time).await.unwrap();
+                if let Ok(_) = cron_parser::parse(&cron_schedule, &chrono::Utc::now()) {
+                    println!("Cron alert set with schedule {cron_schedule} for {coin}.");
+                    self.cron_service.create_cron_alert(msg.chat.id, &coin, &cron_schedule).await.unwrap();
+                    bot.send_message(msg.chat.id, format!("Cron alert set with schedule {cron_schedule} for {coin}.")).await?
+                } else {
+                    println!("Invalid schedule: {schedule}");
+                    bot.send_message(msg.chat.id, format!("Invalid schedule: {schedule}")).await?;
+                    return Ok(());
+                }
+                
             }
             Command::DeleteCronAlert{id} => {
                 self.cron_service.delete_cron_alert(id).await.unwrap();

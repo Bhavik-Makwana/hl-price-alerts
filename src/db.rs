@@ -4,7 +4,6 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use teloxide::types::ChatId;
 use cron_parser::parse;
-use std::str::FromStr;
 
 #[derive(Debug)]
 pub struct AlertTable {
