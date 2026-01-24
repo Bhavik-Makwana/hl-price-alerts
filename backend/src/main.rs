@@ -9,6 +9,7 @@ use backend::{
     notification::{NotificationService, Command},
     alerts::AlertService,
     cron::CronService,
+    AlertBatcher,
 };
 use cron_parser::parse;
 
@@ -156,7 +157,7 @@ async fn main() -> anyhow::Result<()> {
             info!("Cooldown worker stopped");
         }
 
-        // Cron alert worker
+        // Cron alert worker - batches alerts triggered within the same minute
         _ = async move {
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
             loop {
@@ -171,31 +172,41 @@ async fn main() -> anyhow::Result<()> {
                     }
                 };
 
-                for cron_alert in cron_alerts {
-                    info!("Sending cron alert for {}", cron_alert.coin);
+                if cron_alerts.is_empty() {
+                    continue;
+                }
 
-                    // Get current price
-                    let price = match cron_service_for_worker.get_price(&cron_alert.token).await {
-                        Ok(p) => p,
+                info!("Processing {} cron alerts", cron_alerts.len());
+
+                // Collect all alerts with their prices
+                let mut alerts_with_prices: Vec<(backend::db::CronAlert, f64)> = Vec::new();
+                for cron_alert in cron_alerts {
+                    match cron_service_for_worker.get_price(&cron_alert.token).await {
+                        Ok(price) => {
+                            alerts_with_prices.push((cron_alert, price));
+                        }
                         Err(e) => {
                             error!("Failed to get price for {}: {}", cron_alert.token, e);
                             // Still mark as triggered to avoid repeated failures
                             if let Ok(next) = parse(cron_alert.cron_schedule.trim(), &chrono::Utc::now()) {
                                 let _ = cron_service_for_worker.mark_cron_alert_triggered(cron_alert.id, next).await;
                             }
-                            continue;
                         }
-                    };
-
-                    // Send notification
-                    if let Err(e) = bot_for_cron.send_message(
-                        teloxide::types::ChatId(cron_alert.chat_id),
-                        format!("⏰ {}: ${:.2}", cron_alert.coin, price)
-                    ).await {
-                        error!("Failed to send cron alert: {}", e);
                     }
+                }
 
-                    // Calculate next trigger time and update database
+                // Batch alerts by chat_id and send combined messages
+                let batched_alerts = AlertBatcher::batch_alerts(alerts_with_prices.clone());
+                for batched in batched_alerts {
+                    let message = AlertBatcher::format_message(&batched);
+                    info!("Sending batched cron alert to chat {} ({} alerts)", batched.chat_id, batched.alerts.len());
+                    if let Err(e) = bot_for_cron.send_message(batched.chat_id, message).await {
+                        error!("Failed to send batched cron alert: {}", e);
+                    }
+                }
+
+                // Mark all successfully fetched alerts as triggered
+                for (cron_alert, _) in alerts_with_prices {
                     match parse(cron_alert.cron_schedule.trim(), &chrono::Utc::now()) {
                         Ok(next_trigger) => {
                             if let Err(e) = cron_service_for_worker.mark_cron_alert_triggered(cron_alert.id, next_trigger).await {

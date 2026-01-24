@@ -19,7 +19,7 @@ pub struct AlertTable {
     pub cooldown_until: DateTime<Utc>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct CronAlert {
     pub id: i64,
     pub chat_id: i64,
