@@ -47,6 +47,10 @@ impl std::fmt::Display for AlertTable {
 
 impl std::fmt::Display for CronAlert {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let next_trigger_str = self
+            .next_trigger
+            .map(|t| t.format("%Y-%m-%d %H:%M:%S").to_string())
+            .unwrap_or_else(|| "Not scheduled".to_string());
         write!(
             f,
             "⏰ {} {} (schedule: {}) (created {}) (next trigger: {})",
@@ -54,7 +58,7 @@ impl std::fmt::Display for CronAlert {
             self.token,
             self.cron_schedule,
             self.created_at.format("%Y-%m-%d %H:%M:%S"),
-            self.next_trigger.unwrap().format("%Y-%m-%d %H:%M:%S")
+            next_trigger_str
         )
     }
 }
@@ -138,7 +142,7 @@ impl Database {
                 alerted: row.get(6)?,
                 created_at: row.get::<_, DateTime<Utc>>(7)?,
                 updated_at: row.get::<_, DateTime<Utc>>(8)?,
-                cooldown_until: row.get::<_, DateTime<Utc>>(9).unwrap_or(DateTime::<Utc>::from_timestamp(0, 0).unwrap()),
+                cooldown_until: row.get::<_, DateTime<Utc>>(9).unwrap_or(DateTime::UNIX_EPOCH),
             })
         })?.collect::<Result<Vec<AlertTable>>>()?;
         Ok(alerts)
@@ -158,7 +162,7 @@ impl Database {
                 alerted: row.get(6)?,
                 created_at: row.get::<_, DateTime<Utc>>(7)?,
                 updated_at: row.get::<_, DateTime<Utc>>(8)?,
-                cooldown_until: row.get::<_, DateTime<Utc>>(9).unwrap_or(DateTime::<Utc>::from_timestamp(0, 0).unwrap()),
+                cooldown_until: row.get::<_, DateTime<Utc>>(9).unwrap_or(DateTime::UNIX_EPOCH),
             })
         })?.collect::<Result<Vec<AlertTable>>>()?;
         Ok(alerts)
@@ -178,7 +182,7 @@ impl Database {
                 alerted: row.get(6)?,
                 created_at: row.get::<_, DateTime<Utc>>(7)?,
                 updated_at: row.get::<_, DateTime<Utc>>(8)?,
-                cooldown_until: row.get::<_, DateTime<Utc>>(9).unwrap_or(DateTime::<Utc>::from_timestamp(0, 0).unwrap()),
+                cooldown_until: row.get::<_, DateTime<Utc>>(9).unwrap_or(DateTime::UNIX_EPOCH),
             })
         })?.collect::<Result<Vec<AlertTable>>>()?;
         Ok(alerts)
@@ -203,11 +207,12 @@ impl Database {
     }
 
     // Cron alert methods
-    pub async fn insert_cron_alert(&self, chat_id: ChatId, coin: &str, token: &str, cron_schedule: &str) -> Result<()> {
+    pub async fn insert_cron_alert(&self, chat_id: ChatId, coin: &str, token: &str, cron_schedule: &str) -> crate::Result<()> {
         let conn_guard = self.conn.lock().await;
-        let next_trigger = parse(cron_schedule, &chrono::Utc::now()).unwrap();
+        let next_trigger = parse(cron_schedule, &chrono::Utc::now())
+            .map_err(|e| crate::AppError::CronParse(format!("Invalid cron schedule '{}': {}", cron_schedule, e)))?;
         conn_guard.execute(r#"
-        INSERT INTO cron_alerts (chat_id, coin, token, cron_schedule, is_active, created_at, updated_at, next_trigger) 
+        INSERT INTO cron_alerts (chat_id, coin, token, cron_schedule, is_active, created_at, updated_at, next_trigger)
         VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ?)
         "#, (chat_id.0, coin, token, cron_schedule, true, next_trigger))?;
         Ok(())

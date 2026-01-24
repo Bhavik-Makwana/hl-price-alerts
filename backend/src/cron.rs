@@ -1,7 +1,6 @@
 use crate::db::{CronAlert, Database};
 use chrono::{DateTime, Utc};
 use hyperliquid_rust_sdk::InfoClient;
-use rusqlite::Result;
 use std::sync::Arc;
 use teloxide::types::ChatId;
 use tokio::sync::Mutex;
@@ -22,72 +21,97 @@ impl CronService {
         chat_id: ChatId,
         coin: &str,
         cron_schedule: &str,
-    ) -> Result<()> {
-        // Insert into database
-        let token = self.get_token(coin).await.unwrap();
+    ) -> crate::Result<()> {
+        let token = self.get_token(coin).await?;
         self.db
             .insert_cron_alert(chat_id, coin, &token, cron_schedule)
             .await?;
         Ok(())
     }
 
-    pub async fn get_all_cron_alerts(&self) -> Result<Vec<CronAlert>> {
-        self.db.get_all_cron_alerts().await
+    pub async fn get_all_cron_alerts(&self) -> crate::Result<Vec<CronAlert>> {
+        self.db.get_all_cron_alerts().await.map_err(|e| e.into())
     }
 
-    pub async fn get_cron_alerts_for_chat(&self, chat_id: ChatId) -> Result<Vec<CronAlert>> {
-        self.db.get_cron_alerts_for_chat(chat_id).await
+    pub async fn get_cron_alerts_for_chat(&self, chat_id: ChatId) -> crate::Result<Vec<CronAlert>> {
+        self.db.get_cron_alerts_for_chat(chat_id).await.map_err(|e| e.into())
     }
 
-    pub async fn deactivate_cron_alert(&self, alert_id: i64) -> Result<()> {
-        self.db.deactivate_cron_alert(alert_id).await
+    pub async fn deactivate_cron_alert(&self, alert_id: i64) -> crate::Result<()> {
+        self.db.deactivate_cron_alert(alert_id).await.map_err(|e| e.into())
     }
 
-    pub async fn delete_cron_alert(&self, alert_id: i64) -> Result<()> {
-        self.db.delete_cron_alert(alert_id).await
+    pub async fn delete_cron_alert(&self, alert_id: i64) -> crate::Result<()> {
+        self.db.delete_cron_alert(alert_id).await.map_err(|e| e.into())
     }
 
-    pub async fn get_triggered_cron_alerts(&self) -> Result<Vec<CronAlert>> {
-        self.db.get_next_trigger_cron_alerts().await
+    pub async fn get_triggered_cron_alerts(&self) -> crate::Result<Vec<CronAlert>> {
+        self.db.get_next_trigger_cron_alerts().await.map_err(|e| e.into())
     }
 
     pub async fn mark_cron_alert_triggered(
         &self,
         alert_id: i64,
         next_trigger: DateTime<Utc>,
-    ) -> Result<()> {
+    ) -> crate::Result<()> {
         self.db
             .update_cron_alert_last_triggered(alert_id, next_trigger)
             .await
+            .map_err(|e| e.into())
     }
 
-    pub async fn get_price(&self, token: &str) -> anyhow::Result<f64> {
-        let all_mids = self.info_client.lock().await.all_mids().await?;
-        let price = all_mids.get(token).unwrap().parse::<f64>().unwrap();
-
+    pub async fn get_price(&self, token: &str) -> crate::Result<f64> {
+        let all_mids = self.info_client.lock().await.all_mids().await
+            .map_err(|e| crate::AppError::HyperliquidSdk(e.to_string()))?;
+        let price_str = all_mids.get(token)
+            .ok_or_else(|| crate::AppError::TokenNotFound(format!("Token '{}' not found in price data", token)))?;
+        let price = price_str.parse::<f64>()
+            .map_err(|e| crate::AppError::PriceParse(format!("Failed to parse price '{}': {}", price_str, e)))?;
         Ok(price)
     }
 
-    async fn get_token(&self, coin: &str) -> anyhow::Result<String> {
-        let spot_meta = self.info_client.lock().await.spot_meta().await?;
+    async fn get_token(&self, coin: &str) -> crate::Result<String> {
+        let spot_meta = self.info_client.lock().await.spot_meta().await
+            .map_err(|e| crate::AppError::HyperliquidSdk(e.to_string()))?;
         let universe = spot_meta.universe;
         let tokens = spot_meta.tokens;
-        let token_index = tokens.iter().find(|t| t.name == coin).unwrap().index;
+        let token_index = tokens.iter()
+            .find(|t| t.name == coin)
+            .ok_or_else(|| crate::AppError::TokenNotFound(format!("Coin '{}' not found", coin)))?
+            .index;
         let token = universe
             .iter()
             .find(|t| t.tokens[0] == token_index)
-            .unwrap()
+            .ok_or_else(|| crate::AppError::TokenNotFound(format!("Token for coin '{}' not found in universe", coin)))?
             .name
             .clone();
-        println!("Token: {token}");
+        log::debug!("Token: {}", token);
         Ok(token)
     }
 
-    pub async fn create_schedule(&self, schedule: &str, time: &str) -> anyhow::Result<String> {
-        // time format is HH:MM
-        let time = time.split(":").collect::<Vec<&str>>();
-        let hour = time[0].parse::<i32>().unwrap();
-        let minute = time[1].parse::<i32>().unwrap();
+    pub async fn create_schedule(&self, schedule: &str, time: &str) -> crate::Result<String> {
+        let time_parts: Vec<&str> = time.split(':').collect();
+        if time_parts.len() != 2 {
+            return Err(crate::AppError::InvalidTimeFormat(
+                format!("Expected HH:MM format, got '{}'", time)
+            ));
+        }
+        let hour: i32 = time_parts[0].parse()
+            .map_err(|_| crate::AppError::InvalidTimeFormat(format!("Invalid hour: {}", time_parts[0])))?;
+        let minute: i32 = time_parts[1].parse()
+            .map_err(|_| crate::AppError::InvalidTimeFormat(format!("Invalid minute: {}", time_parts[1])))?;
+
+        // Validate hour and minute ranges
+        if !(0..24).contains(&hour) {
+            return Err(crate::AppError::InvalidTimeFormat(
+                format!("Hour must be 0-23, got {}", hour)
+            ));
+        }
+        if !(0..60).contains(&minute) {
+            return Err(crate::AppError::InvalidTimeFormat(
+                format!("Minute must be 0-59, got {}", minute)
+            ));
+        }
 
         match schedule {
             "daily" => {
@@ -109,13 +133,17 @@ impl CronService {
                 let schedule_num = day_map
                     .iter()
                     .find(|(day, _)| *day == schedule_lower.as_str())
-                    .map(|(_, num)| num)
-                    .expect("Invalid schedule");
+                    .map(|(_, num)| *num)
+                    .ok_or_else(|| crate::AppError::InvalidTimeFormat(
+                        format!("Invalid schedule: {}", schedule)
+                    ))?;
                 let cron_schedule = format!("{} {} * * {}", minute, hour, schedule_num);
                 Ok(cron_schedule)
             }
 
-            _ => Err(anyhow::anyhow!("Invalid schedule: {schedule}")),
+            _ => Err(crate::AppError::InvalidTimeFormat(
+                format!("Invalid schedule type '{}'. Use 'daily' or a day name (monday, tuesday, etc.)", schedule)
+            )),
         }
     }
 }
