@@ -2,6 +2,7 @@ use teloxide::{prelude::*, utils::command::BotCommands};
 use crate::db::AlertTable;
 use crate::alerts::AlertService;
 use crate::cron::CronService;
+use crate::AppError;
 
 #[derive(BotCommands, Clone)]
 #[command(rename_rule = "lowercase", description = "These commands are supported:")]
@@ -40,37 +41,90 @@ impl NotificationService {
                 bot.send_message(msg.chat.id, Command::descriptions().to_string()).await?
             }
             Command::Alert => {
-                // let mut alert_price_guard = self.alert_price.lock().await;
-                // *alert_price_guard = price;
-                let alerts = self.alert_service.get_all_alerts_for_chat(msg.chat.id).await.unwrap();
-                let alerts_buffer = alerts.iter().map(|alert| alert.to_string()).collect::<Vec<String>>().join("\n");
-                bot.send_message(msg.chat.id, format!("Alerts: {alerts_buffer}")).await?
+                match self.alert_service.get_all_alerts_for_chat(msg.chat.id).await {
+                    Ok(alerts) => {
+                        let alerts_buffer = if alerts.is_empty() {
+                            "No alerts set.".to_string()
+                        } else {
+                            alerts.iter().map(|alert| alert.to_string()).collect::<Vec<String>>().join("\n")
+                        };
+                        bot.send_message(msg.chat.id, format!("📊 Alerts:\n{}", alerts_buffer)).await?
+                    }
+                    Err(e) => {
+                        log::error!("Failed to fetch alerts: {}", e);
+                        bot.send_message(msg.chat.id, "❌ Failed to fetch alerts. Please try again.").await?
+                    }
+                }
             }
             Command::SetAlert{coin, price} => {
-                self.alert_service.create_alert("0x00",msg.chat.id, &coin, price).await.unwrap();
-                bot.send_message(msg.chat.id, format!("Alert price set to {price} for {coin}.")).await?
+                match self.alert_service.create_alert("0x00", msg.chat.id, &coin, price).await {
+                    Ok(_) => {
+                        bot.send_message(msg.chat.id, format!("✅ Alert set for {} at ${:.2}", coin, price)).await?
+                    }
+                    Err(AppError::TokenNotFound(msg_text)) => {
+                        bot.send_message(msg.chat.id, format!("❌ {}", msg_text)).await?
+                    }
+                    Err(e) => {
+                        log::error!("Failed to create alert: {}", e);
+                        bot.send_message(msg.chat.id, "❌ Failed to create alert. Please try again.").await?
+                    }
+                }
             }
             Command::CronAlerts => {
-                let cron_alerts = self.cron_service.get_cron_alerts_for_chat(msg.chat.id).await.unwrap();
-                let alerts_buffer = cron_alerts.iter().map(|alert| alert.to_string()).collect::<Vec<String>>().join("\n");
-                bot.send_message(msg.chat.id, format!("Cron Alerts:\n{alerts_buffer}")).await?
+                match self.cron_service.get_cron_alerts_for_chat(msg.chat.id).await {
+                    Ok(cron_alerts) => {
+                        let alerts_buffer = if cron_alerts.is_empty() {
+                            "No cron alerts set.".to_string()
+                        } else {
+                            cron_alerts.iter().map(|alert| alert.to_string()).collect::<Vec<String>>().join("\n")
+                        };
+                        bot.send_message(msg.chat.id, format!("⏰ Cron Alerts:\n{}", alerts_buffer)).await?
+                    }
+                    Err(e) => {
+                        log::error!("Failed to fetch cron alerts: {}", e);
+                        bot.send_message(msg.chat.id, "❌ Failed to fetch cron alerts. Please try again.").await?
+                    }
+                }
             }
             Command::SetCronAlert{coin, schedule, time} => {
-                let cron_schedule = self.cron_service.create_schedule(&schedule, &time).await.unwrap();
-                if let Ok(_) = cron_parser::parse(&cron_schedule, &chrono::Utc::now()) {
-                    println!("Cron alert set with schedule {cron_schedule} for {coin}.");
-                    self.cron_service.create_cron_alert(msg.chat.id, &coin, &cron_schedule).await.unwrap();
-                    bot.send_message(msg.chat.id, format!("Cron alert set with schedule {cron_schedule} for {coin}.")).await?
-                } else {
-                    println!("Invalid schedule: {schedule}");
-                    bot.send_message(msg.chat.id, format!("Invalid schedule: {schedule}")).await?;
-                    return Ok(());
+                match self.cron_service.create_schedule(&schedule, &time).await {
+                    Ok(cron_schedule) => {
+                        match self.cron_service.create_cron_alert(msg.chat.id, &coin, &cron_schedule).await {
+                            Ok(_) => {
+                                log::info!("Cron alert set with schedule {} for {}", cron_schedule, coin);
+                                bot.send_message(msg.chat.id, format!("✅ Cron alert set for {} (schedule: {})", coin, cron_schedule)).await?
+                            }
+                            Err(AppError::TokenNotFound(msg_text)) => {
+                                bot.send_message(msg.chat.id, format!("❌ {}", msg_text)).await?
+                            }
+                            Err(AppError::CronParse(msg_text)) => {
+                                bot.send_message(msg.chat.id, format!("❌ {}", msg_text)).await?
+                            }
+                            Err(e) => {
+                                log::error!("Failed to create cron alert: {}", e);
+                                bot.send_message(msg.chat.id, "❌ Failed to create cron alert. Please try again.").await?
+                            }
+                        }
+                    }
+                    Err(AppError::InvalidTimeFormat(msg_text)) => {
+                        bot.send_message(msg.chat.id, format!("❌ {}", msg_text)).await?
+                    }
+                    Err(e) => {
+                        log::error!("Failed to create schedule: {}", e);
+                        bot.send_message(msg.chat.id, format!("❌ Invalid schedule. Use 'daily' or a day name (monday, tuesday, etc.) with time in HH:MM format.")).await?
+                    }
                 }
-                
             }
             Command::DeleteCronAlert{id} => {
-                self.cron_service.delete_cron_alert(id).await.unwrap();
-                bot.send_message(msg.chat.id, format!("Cron alert {id} deleted.")).await?
+                match self.cron_service.delete_cron_alert(id).await {
+                    Ok(_) => {
+                        bot.send_message(msg.chat.id, format!("✅ Cron alert {} deleted.", id)).await?
+                    }
+                    Err(e) => {
+                        log::error!("Failed to delete cron alert {}: {}", id, e);
+                        bot.send_message(msg.chat.id, format!("❌ Failed to delete cron alert {}. It may not exist.", id)).await?
+                    }
+                }
             }
         };
 
@@ -79,10 +133,9 @@ impl NotificationService {
 
     pub async fn send_alert(&self, bot: Bot, alert: &AlertTable) -> ResponseResult<()> {
         bot.send_message(
-            teloxide::types::ChatId(alert.chat_id), 
+            teloxide::types::ChatId(alert.chat_id),
             format!("🔔 Price Alert: {} is at {}", alert.coin, alert.price)
         ).await?;
         Ok(())
     }
-
 }
