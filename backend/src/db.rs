@@ -300,3 +300,198 @@ impl Database {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::NamedTempFile;
+
+    async fn setup_test_db() -> (Database, NamedTempFile) {
+        let temp_file = NamedTempFile::new().expect("Failed to create temp file");
+        let db = Database::new(temp_file.path().to_str().unwrap())
+            .expect("Failed to create test database");
+        db.initialize().await.expect("Failed to initialize database");
+        (db, temp_file)
+    }
+
+    #[tokio::test]
+    async fn test_database_initialization() {
+        let (db, _temp) = setup_test_db().await;
+
+        // Verify tables exist by querying them
+        let alerts = db.get_all_alerts().await;
+        assert!(alerts.is_ok());
+        assert_eq!(alerts.unwrap().len(), 0);
+
+        let cron_alerts = db.get_all_cron_alerts().await;
+        assert!(cron_alerts.is_ok());
+        assert_eq!(cron_alerts.unwrap().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_insert_and_retrieve_alert() {
+        let (db, _temp) = setup_test_db().await;
+
+        db.insert_alert("0x123", ChatId(12345), "HYPE", "@1", 25.0)
+            .await
+            .expect("Insert should succeed");
+
+        let alerts = db.get_all_alerts_for_chat(ChatId(12345))
+            .await
+            .expect("Query should succeed");
+
+        assert_eq!(alerts.len(), 1);
+        assert_eq!(alerts[0].coin, "HYPE");
+        assert_eq!(alerts[0].token, "@1");
+        assert_eq!(alerts[0].price, 25.0);
+        assert_eq!(alerts[0].chat_id, 12345);
+        assert!(!alerts[0].alerted);
+    }
+
+    #[tokio::test]
+    async fn test_get_unique_tokens() {
+        let (db, _temp) = setup_test_db().await;
+
+        db.insert_alert("0x123", ChatId(12345), "HYPE", "@1", 25.0).await.unwrap();
+        db.insert_alert("0x123", ChatId(12345), "SOL", "@2", 150.0).await.unwrap();
+        db.insert_alert("0x123", ChatId(12345), "HYPE", "@1", 30.0).await.unwrap(); // Same token
+
+        let tokens = db.get_all_unique_tokens().await.unwrap();
+
+        assert_eq!(tokens.len(), 2);
+        assert!(tokens.contains(&"@1".to_string()));
+        assert!(tokens.contains(&"@2".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_triggered_alerts_within_price_range() {
+        let (db, _temp) = setup_test_db().await;
+
+        // Insert alert at price 100.0
+        db.insert_alert("0x123", ChatId(12345), "BTC", "@1", 100.0)
+            .await
+            .unwrap();
+
+        // Test within range (should trigger)
+        let triggered = db.get_triggered_alerts(99.9, 100.1).await.unwrap();
+        assert_eq!(triggered.len(), 1);
+
+        // Test outside range (should not trigger)
+        let not_triggered = db.get_triggered_alerts(95.0, 99.0).await.unwrap();
+        assert_eq!(not_triggered.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_cooldown_mechanism() {
+        let (db, _temp) = setup_test_db().await;
+
+        db.insert_alert("0x123", ChatId(12345), "ETH", "@1", 50.0)
+            .await
+            .unwrap();
+
+        let alerts = db.get_all_alerts().await.unwrap();
+        let alert_id = alerts[0].id;
+
+        // Set cooldown
+        db.set_alert_cooldown(alert_id).await.unwrap();
+
+        // Alert should not trigger during cooldown (alerted = true)
+        let triggered = db.get_triggered_alerts(49.9, 50.1).await.unwrap();
+        assert_eq!(triggered.len(), 0);
+
+        // Verify alert is marked as alerted
+        let alerts_after = db.get_all_alerts().await.unwrap();
+        assert!(alerts_after[0].alerted);
+    }
+
+    #[tokio::test]
+    async fn test_insert_and_retrieve_cron_alert() {
+        let (db, _temp) = setup_test_db().await;
+
+        db.insert_cron_alert(ChatId(12345), "HYPE", "@1", "0 8 * * *")
+            .await
+            .expect("Insert should succeed");
+
+        let cron_alerts = db.get_cron_alerts_for_chat(ChatId(12345))
+            .await
+            .expect("Query should succeed");
+
+        assert_eq!(cron_alerts.len(), 1);
+        assert_eq!(cron_alerts[0].coin, "HYPE");
+        assert_eq!(cron_alerts[0].token, "@1");
+        assert_eq!(cron_alerts[0].cron_schedule, "0 8 * * *");
+        assert!(cron_alerts[0].is_active);
+        assert!(cron_alerts[0].next_trigger.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_delete_cron_alert() {
+        let (db, _temp) = setup_test_db().await;
+
+        db.insert_cron_alert(ChatId(12345), "HYPE", "@1", "0 8 * * *")
+            .await
+            .unwrap();
+
+        let alerts_before = db.get_all_cron_alerts().await.unwrap();
+        assert_eq!(alerts_before.len(), 1);
+        let alert_id = alerts_before[0].id;
+
+        db.delete_cron_alert(alert_id).await.unwrap();
+
+        let alerts_after = db.get_all_cron_alerts().await.unwrap();
+        assert_eq!(alerts_after.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_deactivate_cron_alert() {
+        let (db, _temp) = setup_test_db().await;
+
+        db.insert_cron_alert(ChatId(12345), "HYPE", "@1", "0 8 * * *")
+            .await
+            .unwrap();
+
+        let alerts = db.get_all_cron_alerts().await.unwrap();
+        let alert_id = alerts[0].id;
+
+        db.deactivate_cron_alert(alert_id).await.unwrap();
+
+        // get_all_cron_alerts only returns active alerts
+        let active_alerts = db.get_all_cron_alerts().await.unwrap();
+        assert_eq!(active_alerts.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_alert_table_display() {
+        let alert = AlertTable {
+            id: 1,
+            public_key: "0x123".to_string(),
+            chat_id: 12345,
+            coin: "HYPE".to_string(),
+            token: "@1".to_string(),
+            price: 25.50,
+            alerted: false,
+            created_at: DateTime::from_timestamp(1704067200, 0).unwrap(), // 2024-01-01 00:00:00
+            updated_at: DateTime::from_timestamp(1704067200, 0).unwrap(),
+            cooldown_until: DateTime::from_timestamp(0, 0).unwrap(),
+        };
+
+        let display = format!("{}", alert);
+        assert!(display.contains("HYPE"));
+        assert!(display.contains("$25.50"));
+    }
+
+    #[tokio::test]
+    async fn test_multiple_alerts_for_different_chats() {
+        let (db, _temp) = setup_test_db().await;
+
+        db.insert_alert("0x123", ChatId(11111), "HYPE", "@1", 25.0).await.unwrap();
+        db.insert_alert("0x123", ChatId(22222), "SOL", "@2", 150.0).await.unwrap();
+        db.insert_alert("0x123", ChatId(11111), "BTC", "@3", 50000.0).await.unwrap();
+
+        let chat1_alerts = db.get_all_alerts_for_chat(ChatId(11111)).await.unwrap();
+        let chat2_alerts = db.get_all_alerts_for_chat(ChatId(22222)).await.unwrap();
+
+        assert_eq!(chat1_alerts.len(), 2);
+        assert_eq!(chat2_alerts.len(), 1);
+    }
+}
