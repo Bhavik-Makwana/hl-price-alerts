@@ -1,0 +1,17 @@
+# Build output
+target/
+
+# Environment files
+.env
+
+# Database
+*.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# macOS
+.DS_Store
