@@ -3,6 +3,7 @@ use crate::alerts::AlertService;
 use crate::cron::CronService;
 use crate::db::AlertTable;
 use crate::keyboards;
+use crate::callback_handler::UserStateManager;
 use teloxide::{prelude::*, utils::command::BotCommands};
 
 #[derive(BotCommands, Clone)]
@@ -40,13 +41,19 @@ pub enum Command {
 pub struct NotificationService {
     alert_service: AlertService,
     cron_service: CronService,
+    state_manager: UserStateManager,
 }
 
 impl NotificationService {
-    pub fn new(alert_service: AlertService, cron_service: CronService) -> Self {
+    pub fn new(
+        alert_service: AlertService,
+        cron_service: CronService,
+        state_manager: UserStateManager,
+    ) -> Self {
         Self {
             alert_service,
             cron_service,
+            state_manager,
         }
     }
 
@@ -62,6 +69,7 @@ impl NotificationService {
                     .await?
             }
             Command::Menu | Command::Start => {
+                self.state_manager.clear_state(msg.chat.id.0).await;
                 bot.send_message(msg.chat.id, "Welcome! Choose an option:")
                     .reply_markup(keyboards::main_menu_keyboard())
                     .await?
@@ -96,6 +104,7 @@ impl NotificationService {
                 }
             }
             Command::SetAlert { coin, price } => {
+                let coin = coin.to_uppercase();
                 match self
                     .alert_service
                     .create_alert("0x00", msg.chat.id, &coin, price)
@@ -157,6 +166,7 @@ impl NotificationService {
                 time,
             } => match self.cron_service.create_schedule(&schedule, &time).await {
                 Ok(cron_schedule) => {
+                    let coin = coin.to_uppercase();
                     match self
                         .cron_service
                         .create_cron_alert(msg.chat.id, &coin, &cron_schedule)

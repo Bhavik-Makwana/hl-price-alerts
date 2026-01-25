@@ -179,7 +179,7 @@ impl CronService {
             )));
         }
 
-        match schedule {
+        match schedule.to_lowercase().as_str() {
             "daily" => {
                 let cron_schedule = format!("{} {} * * *", minute, hour);
                 log::debug!("Created cron schedule: {}", cron_schedule);
@@ -356,10 +356,22 @@ mod tests {
         let service = CronService::new(db, info_client);
 
         // The current implementation converts to lowercase, so uppercase should work
-        let schedule = service.create_schedule("MONDAY", "09:00").await;
-        // Note: Currently the match is case-sensitive, so this will fail
-        // This test documents the current behavior
-        assert!(schedule.is_err());
+        let schedule = service.create_schedule("MONDAY", "09:00").await.unwrap();
+        assert_eq!(schedule, "0 9 * * 1");
+    }
+
+    #[tokio::test]
+    async fn test_daily_schedule_case_insensitive() {
+        let (db, _temp) = create_test_db().await;
+        let info_client = Arc::new(Mutex::new(
+            InfoClient::new(None, Some(hyperliquid_rust_sdk::BaseUrl::Mainnet))
+                .await
+                .unwrap(),
+        ));
+        let service = CronService::new(db, info_client);
+
+        let schedule = service.create_schedule("Daily", "09:00").await.unwrap();
+        assert_eq!(schedule, "0 9 * * *");
     }
 
     #[tokio::test]
