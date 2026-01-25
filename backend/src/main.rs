@@ -137,8 +137,11 @@ async fn main() -> anyhow::Result<()> {
 
     // Create notification and callback handlers
     let state_manager = UserStateManager::new();
-    let notification_service =
-        NotificationService::new(alert_service.clone(), cron_service.clone(), state_manager.clone());
+    let notification_service = NotificationService::new(
+        alert_service.clone(),
+        cron_service.clone(),
+        state_manager.clone(),
+    );
     let callback_handler = CallbackHandler::new(alert_service, cron_service.clone(), state_manager);
 
     // Build dispatcher with all handlers

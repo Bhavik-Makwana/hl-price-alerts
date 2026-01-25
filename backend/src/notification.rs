@@ -1,9 +1,9 @@
 use crate::AppError;
 use crate::alerts::AlertService;
+use crate::callback_handler::UserStateManager;
 use crate::cron::CronService;
 use crate::db::AlertTable;
 use crate::keyboards;
-use crate::callback_handler::UserStateManager;
 use teloxide::{prelude::*, utils::command::BotCommands};
 
 #[derive(BotCommands, Clone)]
