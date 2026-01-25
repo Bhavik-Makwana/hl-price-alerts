@@ -1,4 +1,4 @@
-use log::{debug, error, info};
+use log::{debug, error, info, warn};
 use std::collections::HashMap;
 use std::sync::Arc;
 use teloxide::prelude::*;
@@ -686,9 +686,11 @@ Commands:
                 Ok(true)
             }
             UserState::WaitingForCronTime { coin, schedule } => {
+                info!("Processing cron time input for chat_id={}, coin={}, schedule={}, time='{}'", chat_id, coin, schedule, text);
                 // Validate time format HH:MM
                 let time = text.trim();
                 if !time.contains(':') || time.len() != 5 {
+                    warn!("Invalid time format from chat_id={}: '{}'", chat_id, time);
                     bot.send_message(
                         chat_id,
                         "Invalid time format. Please use HH:MM (e.g., 09:00):",
@@ -716,6 +718,7 @@ Commands:
                                 .await?;
                             }
                             Err(AppError::TokenNotFound(msg)) => {
+                                warn!("Token not found for cron alert creation: {}", msg);
                                 bot.send_message(chat_id, format!("Error: {}", msg))
                                     .reply_markup(keyboards::main_menu_keyboard())
                                     .await?;
@@ -732,6 +735,7 @@ Commands:
                         }
                     }
                     Err(AppError::InvalidTimeFormat(msg)) => {
+                        warn!("Invalid time format for cron schedule: {}", msg);
                         bot.send_message(chat_id, format!("Error: {}", msg))
                             .reply_markup(keyboards::main_menu_keyboard())
                             .await?;
@@ -746,7 +750,10 @@ Commands:
                 self.state_manager.clear_state(chat_id.0).await;
                 Ok(true)
             }
-            UserState::Idle => Ok(false), // Not handled by callback handler
+            UserState::Idle => {
+                debug!("Received text input '{}' from chat_id={} but state is Idle, ignoring", text, chat_id);
+                Ok(false)
+            }
         }
     }
 }

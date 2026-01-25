@@ -22,10 +22,20 @@ impl CronService {
         coin: &str,
         cron_schedule: &str,
     ) -> crate::Result<()> {
-        let token = self.get_token(coin).await?;
+        log::debug!("Creating cron alert for chat_id={}, coin={}, schedule={}", chat_id, coin, cron_schedule);
+        let token = self.get_token(coin).await.map_err(|e| {
+            log::error!("Failed to get token for coin '{}': {}", coin, e);
+            e
+        })?;
+        log::debug!("Got token '{}' for coin '{}'", token, coin);
         self.db
             .insert_cron_alert(chat_id, coin, &token, cron_schedule)
-            .await?;
+            .await
+            .map_err(|e| {
+                log::error!("Failed to insert cron alert into DB for chat_id={}, coin={}: {}", chat_id, coin, e);
+                e
+            })?;
+        log::info!("Successfully created cron alert for chat_id={}, coin={}, schedule={}", chat_id, coin, cron_schedule);
         Ok(())
     }
 
@@ -120,8 +130,10 @@ impl CronService {
     }
 
     pub async fn create_schedule(&self, schedule: &str, time: &str) -> crate::Result<String> {
+        log::debug!("Creating schedule: schedule='{}', time='{}'", schedule, time);
         let time_parts: Vec<&str> = time.split(':').collect();
         if time_parts.len() != 2 {
+            log::warn!("Invalid time format: expected HH:MM, got '{}'", time);
             return Err(crate::AppError::InvalidTimeFormat(format!(
                 "Expected HH:MM format, got '{}'",
                 time
@@ -151,6 +163,7 @@ impl CronService {
         match schedule {
             "daily" => {
                 let cron_schedule = format!("{} {} * * *", minute, hour);
+                log::debug!("Created cron schedule: {}", cron_schedule);
                 Ok(cron_schedule)
             }
             "monday" | "tuesday" | "wednesday" | "thursday" | "friday" | "saturday" | "sunday" => {
@@ -176,13 +189,17 @@ impl CronService {
                         ))
                     })?;
                 let cron_schedule = format!("{} {} * * {}", minute, hour, schedule_num);
+                log::debug!("Created cron schedule: {}", cron_schedule);
                 Ok(cron_schedule)
             }
 
-            _ => Err(crate::AppError::InvalidTimeFormat(format!(
-                "Invalid schedule type '{}'. Use 'daily' or a day name (monday, tuesday, etc.)",
-                schedule
-            ))),
+            _ => {
+                log::warn!("Invalid schedule type: '{}'", schedule);
+                Err(crate::AppError::InvalidTimeFormat(format!(
+                    "Invalid schedule type '{}'. Use 'daily' or a day name (monday, tuesday, etc.)",
+                    schedule
+                )))
+            }
         }
     }
 }
