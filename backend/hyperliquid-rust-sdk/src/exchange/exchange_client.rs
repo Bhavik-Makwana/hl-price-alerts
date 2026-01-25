@@ -664,7 +664,7 @@ impl ExchangeClient {
             signature_chain_id: 421614.into(),
             hyperliquid_chain,
             agent_address: address,
-            agent_name: agent_name,
+            agent_name,
             nonce,
         };
         let signature = sign_typed_data(&approve_agent, wallet)?;

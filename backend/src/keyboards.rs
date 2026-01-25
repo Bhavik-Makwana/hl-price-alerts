@@ -2,6 +2,7 @@ use teloxide::types::{InlineKeyboardButton, InlineKeyboardMarkup};
 
 /// Callback data prefixes for parsing
 pub const CB_COIN_SELECT: &str = "coin:";
+pub const CB_CUSTOM_COIN: &str = "custom_coin";
 pub const CB_DELETE_ALERT: &str = "del_alert:";
 pub const CB_DELETE_CRON: &str = "del_cron:";
 pub const CB_CONFIRM_DELETE_ALERT: &str = "confirm_del_alert:";
@@ -29,9 +30,7 @@ pub fn main_menu_keyboard() -> InlineKeyboardMarkup {
             InlineKeyboardButton::callback("➕ New Price Alert", CB_MENU_NEW_ALERT),
             InlineKeyboardButton::callback("➕ New Cron Alert", CB_MENU_NEW_CRON),
         ],
-        vec![
-            InlineKeyboardButton::callback("❓ Help", CB_MENU_HELP),
-        ],
+        vec![InlineKeyboardButton::callback("❓ Help", CB_MENU_HELP)],
     ])
 }
 
@@ -40,16 +39,20 @@ pub fn coin_selection_keyboard() -> InlineKeyboardMarkup {
     let coin_buttons: Vec<Vec<InlineKeyboardButton>> = POPULAR_COINS
         .chunks(3)
         .map(|chunk| {
-            chunk.iter()
-                .map(|coin| InlineKeyboardButton::callback(
-                    *coin,
-                    format!("{}{}", CB_COIN_SELECT, coin)
-                ))
+            chunk
+                .iter()
+                .map(|coin| {
+                    InlineKeyboardButton::callback(*coin, format!("{}{}", CB_COIN_SELECT, coin))
+                })
                 .collect()
         })
         .collect();
 
     let mut buttons = coin_buttons;
+    buttons.push(vec![InlineKeyboardButton::callback(
+        "✏️ Other",
+        CB_CUSTOM_COIN,
+    )]);
     buttons.push(vec![InlineKeyboardButton::callback("🔙 Cancel", CB_CANCEL)]);
 
     InlineKeyboardMarkup::new(buttons)
@@ -63,19 +66,17 @@ pub fn alerts_list_keyboard(alerts: &[(i64, String, f64)]) -> InlineKeyboardMark
             vec![
                 InlineKeyboardButton::callback(
                     format!("{} @ ${:.2}", coin, price),
-                    format!("view_alert:{}", id)
+                    format!("view_alert:{}", id),
                 ),
-                InlineKeyboardButton::callback(
-                    "🗑",
-                    format!("{}{}", CB_DELETE_ALERT, id)
-                ),
+                InlineKeyboardButton::callback("🗑", format!("{}{}", CB_DELETE_ALERT, id)),
             ]
         })
         .collect();
 
-    buttons.push(vec![
-        InlineKeyboardButton::callback("🔙 Back", CB_MAIN_MENU),
-    ]);
+    buttons.push(vec![InlineKeyboardButton::callback(
+        "🔙 Back",
+        CB_MAIN_MENU,
+    )]);
 
     InlineKeyboardMarkup::new(buttons)
 }
@@ -88,55 +89,50 @@ pub fn cron_alerts_list_keyboard(alerts: &[(i64, String, String)]) -> InlineKeyb
             vec![
                 InlineKeyboardButton::callback(
                     format!("{} ({})", coin, schedule),
-                    format!("view_cron:{}", id)
+                    format!("view_cron:{}", id),
                 ),
-                InlineKeyboardButton::callback(
-                    "🗑",
-                    format!("{}{}", CB_DELETE_CRON, id)
-                ),
+                InlineKeyboardButton::callback("🗑", format!("{}{}", CB_DELETE_CRON, id)),
             ]
         })
         .collect();
 
-    buttons.push(vec![
-        InlineKeyboardButton::callback("🔙 Back", CB_MAIN_MENU),
-    ]);
+    buttons.push(vec![InlineKeyboardButton::callback(
+        "🔙 Back",
+        CB_MAIN_MENU,
+    )]);
 
     InlineKeyboardMarkup::new(buttons)
 }
 
 /// Build confirmation dialog for deleting an alert
 pub fn confirm_delete_alert_keyboard(alert_id: i64) -> InlineKeyboardMarkup {
-    InlineKeyboardMarkup::new(vec![
-        vec![
-            InlineKeyboardButton::callback(
-                "✅ Yes, delete",
-                format!("{}{}", CB_CONFIRM_DELETE_ALERT, alert_id)
-            ),
-            InlineKeyboardButton::callback("❌ Cancel", CB_CANCEL),
-        ],
-    ])
+    InlineKeyboardMarkup::new(vec![vec![
+        InlineKeyboardButton::callback(
+            "✅ Yes, delete",
+            format!("{}{}", CB_CONFIRM_DELETE_ALERT, alert_id),
+        ),
+        InlineKeyboardButton::callback("❌ Cancel", CB_CANCEL),
+    ]])
 }
 
 /// Build confirmation dialog for deleting a cron alert
 pub fn confirm_delete_cron_keyboard(alert_id: i64) -> InlineKeyboardMarkup {
-    InlineKeyboardMarkup::new(vec![
-        vec![
-            InlineKeyboardButton::callback(
-                "✅ Yes, delete",
-                format!("{}{}", CB_CONFIRM_DELETE_CRON, alert_id)
-            ),
-            InlineKeyboardButton::callback("❌ Cancel", CB_CANCEL),
-        ],
-    ])
+    InlineKeyboardMarkup::new(vec![vec![
+        InlineKeyboardButton::callback(
+            "✅ Yes, delete",
+            format!("{}{}", CB_CONFIRM_DELETE_CRON, alert_id),
+        ),
+        InlineKeyboardButton::callback("❌ Cancel", CB_CANCEL),
+    ]])
 }
 
 /// Schedule selection for cron alerts
 pub fn schedule_selection_keyboard() -> InlineKeyboardMarkup {
     InlineKeyboardMarkup::new(vec![
-        vec![
-            InlineKeyboardButton::callback("Daily", format!("{}daily", CB_SCHEDULE_PREFIX)),
-        ],
+        vec![InlineKeyboardButton::callback(
+            "Daily",
+            format!("{}daily", CB_SCHEDULE_PREFIX),
+        )],
         vec![
             InlineKeyboardButton::callback("Mon", format!("{}monday", CB_SCHEDULE_PREFIX)),
             InlineKeyboardButton::callback("Tue", format!("{}tuesday", CB_SCHEDULE_PREFIX)),
@@ -147,12 +143,11 @@ pub fn schedule_selection_keyboard() -> InlineKeyboardMarkup {
             InlineKeyboardButton::callback("Fri", format!("{}friday", CB_SCHEDULE_PREFIX)),
             InlineKeyboardButton::callback("Sat", format!("{}saturday", CB_SCHEDULE_PREFIX)),
         ],
-        vec![
-            InlineKeyboardButton::callback("Sun", format!("{}sunday", CB_SCHEDULE_PREFIX)),
-        ],
-        vec![
-            InlineKeyboardButton::callback("🔙 Cancel", CB_CANCEL),
-        ],
+        vec![InlineKeyboardButton::callback(
+            "Sun",
+            format!("{}sunday", CB_SCHEDULE_PREFIX),
+        )],
+        vec![InlineKeyboardButton::callback("🔙 Cancel", CB_CANCEL)],
     ])
 }
 
@@ -160,6 +155,7 @@ pub fn schedule_selection_keyboard() -> InlineKeyboardMarkup {
 #[derive(Debug, Clone, PartialEq)]
 pub enum CallbackAction {
     CoinSelect(String),
+    CustomCoin,
     DeleteAlert(i64),
     DeleteCron(i64),
     ConfirmDeleteAlert(i64),
@@ -177,26 +173,32 @@ pub enum CallbackAction {
 
 /// Parse callback data into an action
 pub fn parse_callback(data: &str) -> CallbackAction {
-    if data.starts_with(CB_COIN_SELECT) {
-        CallbackAction::CoinSelect(data[CB_COIN_SELECT.len()..].to_string())
-    } else if data.starts_with(CB_DELETE_ALERT) {
-        data[CB_DELETE_ALERT.len()..].parse::<i64>()
+    if let Some(coin) = data.strip_prefix(CB_COIN_SELECT) {
+        CallbackAction::CoinSelect(coin.to_string())
+    } else if data == CB_CUSTOM_COIN {
+        CallbackAction::CustomCoin
+    } else if let Some(id_str) = data.strip_prefix(CB_DELETE_ALERT) {
+        id_str
+            .parse::<i64>()
             .map(CallbackAction::DeleteAlert)
             .unwrap_or_else(|_| CallbackAction::Unknown(data.to_string()))
-    } else if data.starts_with(CB_DELETE_CRON) {
-        data[CB_DELETE_CRON.len()..].parse::<i64>()
+    } else if let Some(id_str) = data.strip_prefix(CB_DELETE_CRON) {
+        id_str
+            .parse::<i64>()
             .map(CallbackAction::DeleteCron)
             .unwrap_or_else(|_| CallbackAction::Unknown(data.to_string()))
-    } else if data.starts_with(CB_CONFIRM_DELETE_ALERT) {
-        data[CB_CONFIRM_DELETE_ALERT.len()..].parse::<i64>()
+    } else if let Some(id_str) = data.strip_prefix(CB_CONFIRM_DELETE_ALERT) {
+        id_str
+            .parse::<i64>()
             .map(CallbackAction::ConfirmDeleteAlert)
             .unwrap_or_else(|_| CallbackAction::Unknown(data.to_string()))
-    } else if data.starts_with(CB_CONFIRM_DELETE_CRON) {
-        data[CB_CONFIRM_DELETE_CRON.len()..].parse::<i64>()
+    } else if let Some(id_str) = data.strip_prefix(CB_CONFIRM_DELETE_CRON) {
+        id_str
+            .parse::<i64>()
             .map(CallbackAction::ConfirmDeleteCron)
             .unwrap_or_else(|_| CallbackAction::Unknown(data.to_string()))
-    } else if data.starts_with(CB_SCHEDULE_PREFIX) {
-        CallbackAction::ScheduleSelect(data[CB_SCHEDULE_PREFIX.len()..].to_string())
+    } else if let Some(schedule) = data.strip_prefix(CB_SCHEDULE_PREFIX) {
+        CallbackAction::ScheduleSelect(schedule.to_string())
     } else if data == CB_CANCEL {
         CallbackAction::Cancel
     } else if data == CB_MAIN_MENU {
@@ -269,6 +271,11 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_custom_coin() {
+        assert_eq!(parse_callback("custom_coin"), CallbackAction::CustomCoin);
+    }
+
+    #[test]
     fn test_parse_cancel() {
         assert_eq!(parse_callback("cancel"), CallbackAction::Cancel);
     }
@@ -282,7 +289,10 @@ mod tests {
     fn test_parse_menu_actions() {
         assert_eq!(parse_callback("menu:alerts"), CallbackAction::MenuAlerts);
         assert_eq!(parse_callback("menu:cron"), CallbackAction::MenuCron);
-        assert_eq!(parse_callback("menu:new_alert"), CallbackAction::MenuNewAlert);
+        assert_eq!(
+            parse_callback("menu:new_alert"),
+            CallbackAction::MenuNewAlert
+        );
         assert_eq!(parse_callback("menu:new_cron"), CallbackAction::MenuNewCron);
         assert_eq!(parse_callback("menu:help"), CallbackAction::MenuHelp);
     }
@@ -312,8 +322,8 @@ mod tests {
     #[test]
     fn test_coin_selection_keyboard_has_coins() {
         let kb = coin_selection_keyboard();
-        // Should have ceil(5/3) = 2 rows of coins + 1 cancel row = 3 rows
-        assert!(kb.inline_keyboard.len() >= 2);
+        // Should have ceil(5/3) = 2 rows of coins + 1 "Other" row + 1 cancel row = 4 rows
+        assert_eq!(kb.inline_keyboard.len(), 4);
     }
 
     #[test]
@@ -326,10 +336,7 @@ mod tests {
 
     #[test]
     fn test_alerts_list_keyboard_with_alerts() {
-        let alerts = vec![
-            (1, "HYPE".to_string(), 25.0),
-            (2, "SOL".to_string(), 150.0),
-        ];
+        let alerts = vec![(1, "HYPE".to_string(), 25.0), (2, "SOL".to_string(), 150.0)];
         let kb = alerts_list_keyboard(&alerts);
         // 2 alert rows + 1 back row
         assert_eq!(kb.inline_keyboard.len(), 3);

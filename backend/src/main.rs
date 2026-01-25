@@ -1,17 +1,57 @@
-use hyperliquid_rust_sdk::{BaseUrl, InfoClient, Subscription};
-use log::{info, error, debug};
-use tokio::sync::mpsc::unbounded_channel;
-use teloxide::prelude::*;
-use std::sync::Arc;
-use tokio::sync::Mutex;
 use backend::{
-    db::Database,
-    notification::{NotificationService, Command},
+    AlertBatcher, CallbackHandler, UserStateManager,
     alerts::AlertService,
     cron::CronService,
-    AlertBatcher,
+    db::Database,
+    notification::{Command, NotificationService},
 };
 use cron_parser::parse;
+use hyperliquid_rust_sdk::{BaseUrl, InfoClient, Subscription};
+use log::{debug, error, info};
+use std::sync::Arc;
+use teloxide::dispatching::{UpdateFilterExt, UpdateHandler};
+use teloxide::dptree;
+use teloxide::prelude::*;
+use teloxide::types::Update;
+use tokio::sync::Mutex;
+use tokio::sync::mpsc::unbounded_channel;
+
+fn schema() -> UpdateHandler<Box<dyn std::error::Error + Send + Sync + 'static>> {
+    let command_handler = Update::filter_message()
+        .filter_command::<Command>()
+        .endpoint(
+            |bot: Bot,
+             msg: teloxide::types::Message,
+             cmd: Command,
+             notification_service: NotificationService| async move {
+                notification_service.handle_command(bot, msg, cmd).await?;
+                Ok(())
+            },
+        );
+
+    let callback_handler = Update::filter_callback_query().endpoint(
+        |bot: Bot, query: teloxide::types::CallbackQuery, callback_handler: CallbackHandler| async move {
+            callback_handler.handle_callback(bot, query).await?;
+            Ok(())
+        },
+    );
+
+    let text_handler = Update::filter_message()
+        .filter(|msg: teloxide::types::Message| msg.text().is_some() && !msg.text().unwrap_or("").starts_with('/'))
+        .endpoint(
+            |bot: Bot, msg: teloxide::types::Message, callback_handler: CallbackHandler| async move {
+                if let Some(text) = msg.text() {
+                    let _ = callback_handler.handle_text_input(&bot, msg.chat.id, text).await;
+                }
+                Ok(())
+            },
+        );
+
+    dptree::entry()
+        .branch(command_handler)
+        .branch(callback_handler)
+        .branch(text_handler)
+}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -23,15 +63,19 @@ async fn main() -> anyhow::Result<()> {
     // Initialize database
     let db = Database::new("alerts.db")
         .map_err(|e| anyhow::anyhow!("Failed to open database: {}", e))?;
-    db.initialize().await
+    db.initialize()
+        .await
         .map_err(|e| anyhow::anyhow!("Failed to initialize database: {}", e))?;
-    let tokens = db.get_all_unique_tokens().await
+    let tokens = db
+        .get_all_unique_tokens()
+        .await
         .map_err(|e| anyhow::anyhow!("Failed to get tokens: {}", e))?;
 
     // Initialize Hyperliquid client
     let info_client = Arc::new(Mutex::new(
-        InfoClient::new(None, Some(BaseUrl::Mainnet)).await
-            .map_err(|e| anyhow::anyhow!("Failed to create InfoClient: {}", e))?
+        InfoClient::new(None, Some(BaseUrl::Mainnet))
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to create InfoClient: {}", e))?,
     ));
 
     let alert_service = AlertService::new(db.clone(), info_client.clone());
@@ -65,9 +109,12 @@ async fn main() -> anyhow::Result<()> {
     let mut subscription_ids = Vec::new();
     for token in tokens {
         match info_client
-            .lock().await
+            .lock()
+            .await
             .subscribe(
-                Subscription::ActiveAssetCtx { coin: token.clone() },
+                Subscription::ActiveAssetCtx {
+                    coin: token.clone(),
+                },
                 sender.clone(),
             )
             .await
@@ -84,16 +131,22 @@ async fn main() -> anyhow::Result<()> {
     let alert_service_for_cooldowns = alert_service.clone();
     let cron_service_for_worker = cron_service.clone();
     let bot_for_cron = bot.clone();
-    let notification_service = NotificationService::new(alert_service, cron_service.clone());
+
+    // Create notification and callback handlers
+    let state_manager = UserStateManager::new();
+    let notification_service =
+        NotificationService::new(alert_service.clone(), cron_service.clone());
+    let callback_handler = CallbackHandler::new(alert_service, cron_service.clone(), state_manager);
+
+    // Build dispatcher with all handlers
+    let mut dispatcher = Dispatcher::builder(bot.clone(), schema())
+        .dependencies(dptree::deps![notification_service, callback_handler])
+        .enable_ctrlc_handler()
+        .build();
 
     tokio::select! {
-        // Telegram command handler
-        _ = Command::repl(bot.clone(), move |bot, msg, cmd| {
-            let notification_service = notification_service.clone();
-            async move {
-                notification_service.handle_command(bot, msg, cmd).await
-            }
-        }) => {
+        // Telegram dispatcher (commands + callbacks + text input)
+        _ = dispatcher.dispatch() => {
             info!("Telegram bot stopped, unsubscribing from price updates");
             for subscription_id in subscription_ids {
                 if let Err(e) = info_client.lock().await.unsubscribe(subscription_id).await {

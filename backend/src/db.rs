@@ -1,9 +1,9 @@
-use rusqlite::{Connection, Result, params};
 use chrono::{DateTime, Utc};
-use std::sync::Arc;
-use tokio::sync::Mutex;
-use teloxide::types::ChatId;
 use cron_parser::parse;
+use rusqlite::{Connection, Result, params};
+use std::sync::Arc;
+use teloxide::types::ChatId;
+use tokio::sync::Mutex;
 
 #[derive(Debug)]
 pub struct AlertTable {
@@ -78,7 +78,8 @@ impl Database {
 
     pub async fn initialize(&self) -> Result<()> {
         let conn_guard = self.conn.lock().await;
-        conn_guard.execute(r#"
+        conn_guard.execute(
+            r#"
         CREATE TABLE IF NOT EXISTS alerts (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             public_key TEXT,
@@ -91,9 +92,12 @@ impl Database {
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             cooldown_until TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
-        "#, ())?;
-        
-        conn_guard.execute(r#"
+        "#,
+            (),
+        )?;
+
+        conn_guard.execute(
+            r#"
         CREATE TABLE IF NOT EXISTS cron_alerts (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             chat_id INTEGER,
@@ -106,11 +110,20 @@ impl Database {
             last_triggered TIMESTAMP,
             next_trigger TIMESTAMP
         )
-        "#, ())?;
+        "#,
+            (),
+        )?;
         Ok(())
     }
 
-    pub async fn insert_alert(&self, public_key: &str, chat_id: ChatId, coin: &str, token: &str, price: f64) -> Result<()> {
+    pub async fn insert_alert(
+        &self,
+        public_key: &str,
+        chat_id: ChatId,
+        coin: &str,
+        token: &str,
+        price: f64,
+    ) -> Result<()> {
         let conn_guard = self.conn.lock().await;
         conn_guard.execute(r#"
         INSERT INTO alerts (public_key, chat_id, coin, token, price, alerted, created_at, updated_at, cooldown_until) 
@@ -122,69 +135,86 @@ impl Database {
     pub async fn get_all_unique_tokens(&self) -> Result<Vec<String>> {
         let conn_guard = self.conn.lock().await;
         let mut stmt = conn_guard.prepare("SELECT DISTINCT token FROM alerts")?;
-        let tokens = stmt.query_map([], |row| {
-            Ok(row.get(0)?)
-        })?.collect::<Result<Vec<String>>>()?;
+        let tokens = stmt
+            .query_map([], |row| row.get(0))?
+            .collect::<Result<Vec<String>>>()?;
         Ok(tokens)
     }
-    
+
     pub async fn get_all_alerts(&self) -> Result<Vec<AlertTable>> {
         let conn_guard = self.conn.lock().await;
         let mut stmt = conn_guard.prepare("SELECT * FROM alerts")?;
-        let alerts = stmt.query_map([], |row| {
-            Ok(AlertTable {
-                id: row.get(0)?,
-                public_key: row.get(1)?,
-                chat_id: row.get(2)?,
-                coin: row.get(3)?,
-                token: row.get(4)?,
-                price: row.get(5)?,
-                alerted: row.get(6)?,
-                created_at: row.get::<_, DateTime<Utc>>(7)?,
-                updated_at: row.get::<_, DateTime<Utc>>(8)?,
-                cooldown_until: row.get::<_, DateTime<Utc>>(9).unwrap_or(DateTime::UNIX_EPOCH),
-            })
-        })?.collect::<Result<Vec<AlertTable>>>()?;
+        let alerts = stmt
+            .query_map([], |row| {
+                Ok(AlertTable {
+                    id: row.get(0)?,
+                    public_key: row.get(1)?,
+                    chat_id: row.get(2)?,
+                    coin: row.get(3)?,
+                    token: row.get(4)?,
+                    price: row.get(5)?,
+                    alerted: row.get(6)?,
+                    created_at: row.get::<_, DateTime<Utc>>(7)?,
+                    updated_at: row.get::<_, DateTime<Utc>>(8)?,
+                    cooldown_until: row
+                        .get::<_, DateTime<Utc>>(9)
+                        .unwrap_or(DateTime::UNIX_EPOCH),
+                })
+            })?
+            .collect::<Result<Vec<AlertTable>>>()?;
         Ok(alerts)
     }
 
     pub async fn get_all_alerts_for_chat(&self, chat_id: ChatId) -> Result<Vec<AlertTable>> {
         let conn_guard = self.conn.lock().await;
         let mut stmt = conn_guard.prepare("SELECT * FROM alerts WHERE chat_id = ?")?;
-        let alerts = stmt.query_map([chat_id.0], |row| {
-            Ok(AlertTable {
-                id: row.get(0)?,
-                public_key: row.get(1)?,
-                chat_id: row.get(2)?,
-                coin: row.get(3)?,
-                token: row.get(4)?,
-                price: row.get(5)?,
-                alerted: row.get(6)?,
-                created_at: row.get::<_, DateTime<Utc>>(7)?,
-                updated_at: row.get::<_, DateTime<Utc>>(8)?,
-                cooldown_until: row.get::<_, DateTime<Utc>>(9).unwrap_or(DateTime::UNIX_EPOCH),
-            })
-        })?.collect::<Result<Vec<AlertTable>>>()?;
+        let alerts = stmt
+            .query_map([chat_id.0], |row| {
+                Ok(AlertTable {
+                    id: row.get(0)?,
+                    public_key: row.get(1)?,
+                    chat_id: row.get(2)?,
+                    coin: row.get(3)?,
+                    token: row.get(4)?,
+                    price: row.get(5)?,
+                    alerted: row.get(6)?,
+                    created_at: row.get::<_, DateTime<Utc>>(7)?,
+                    updated_at: row.get::<_, DateTime<Utc>>(8)?,
+                    cooldown_until: row
+                        .get::<_, DateTime<Utc>>(9)
+                        .unwrap_or(DateTime::UNIX_EPOCH),
+                })
+            })?
+            .collect::<Result<Vec<AlertTable>>>()?;
         Ok(alerts)
     }
 
-    pub async fn get_triggered_alerts(&self, lower_price: f64, upper_price: f64) -> Result<Vec<AlertTable>> {
+    pub async fn get_triggered_alerts(
+        &self,
+        lower_price: f64,
+        upper_price: f64,
+    ) -> Result<Vec<AlertTable>> {
         let conn_guard = self.conn.lock().await;
-        let mut stmt = conn_guard.prepare("SELECT * FROM alerts WHERE alerted = false AND price BETWEEN ? AND ?")?;
-        let alerts = stmt.query_map([lower_price, upper_price], |row| {
-            Ok(AlertTable {
-                id: row.get(0)?,
-                public_key: row.get(1)?,
-                chat_id: row.get(2)?,
-                coin: row.get(3)?,
-                token: row.get(4)?,
-                price: row.get(5)?,
-                alerted: row.get(6)?,
-                created_at: row.get::<_, DateTime<Utc>>(7)?,
-                updated_at: row.get::<_, DateTime<Utc>>(8)?,
-                cooldown_until: row.get::<_, DateTime<Utc>>(9).unwrap_or(DateTime::UNIX_EPOCH),
-            })
-        })?.collect::<Result<Vec<AlertTable>>>()?;
+        let mut stmt = conn_guard
+            .prepare("SELECT * FROM alerts WHERE alerted = false AND price BETWEEN ? AND ?")?;
+        let alerts = stmt
+            .query_map([lower_price, upper_price], |row| {
+                Ok(AlertTable {
+                    id: row.get(0)?,
+                    public_key: row.get(1)?,
+                    chat_id: row.get(2)?,
+                    coin: row.get(3)?,
+                    token: row.get(4)?,
+                    price: row.get(5)?,
+                    alerted: row.get(6)?,
+                    created_at: row.get::<_, DateTime<Utc>>(7)?,
+                    updated_at: row.get::<_, DateTime<Utc>>(8)?,
+                    cooldown_until: row
+                        .get::<_, DateTime<Utc>>(9)
+                        .unwrap_or(DateTime::UNIX_EPOCH),
+                })
+            })?
+            .collect::<Result<Vec<AlertTable>>>()?;
         Ok(alerts)
     }
 
@@ -202,15 +232,29 @@ impl Database {
         Ok(result)
     }
 
+    pub async fn delete_alert(&self, alert_id: i64) -> Result<()> {
+        let conn_guard = self.conn.lock().await;
+        let mut stmt = conn_guard.prepare("DELETE FROM alerts WHERE id = ?")?;
+        stmt.execute([alert_id])?;
+        Ok(())
+    }
+
     pub fn get_connection(&self) -> Arc<Mutex<Connection>> {
         self.conn.clone()
     }
 
     // Cron alert methods
-    pub async fn insert_cron_alert(&self, chat_id: ChatId, coin: &str, token: &str, cron_schedule: &str) -> crate::Result<()> {
+    pub async fn insert_cron_alert(
+        &self,
+        chat_id: ChatId,
+        coin: &str,
+        token: &str,
+        cron_schedule: &str,
+    ) -> crate::Result<()> {
         let conn_guard = self.conn.lock().await;
-        let next_trigger = parse(cron_schedule, &chrono::Utc::now())
-            .map_err(|e| crate::AppError::CronParse(format!("Invalid cron schedule '{}': {}", cron_schedule, e)))?;
+        let next_trigger = parse(cron_schedule, &chrono::Utc::now()).map_err(|e| {
+            crate::AppError::CronParse(format!("Invalid cron schedule '{}': {}", cron_schedule, e))
+        })?;
         conn_guard.execute(r#"
         INSERT INTO cron_alerts (chat_id, coin, token, cron_schedule, is_active, created_at, updated_at, next_trigger)
         VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ?)
@@ -221,79 +265,95 @@ impl Database {
     pub async fn get_all_cron_alerts(&self) -> Result<Vec<CronAlert>> {
         let conn_guard = self.conn.lock().await;
         let mut stmt = conn_guard.prepare("SELECT * FROM cron_alerts WHERE is_active = true")?;
-        let alerts = stmt.query_map([], |row| {
-            Ok(CronAlert {
-                id: row.get(0)?,
-                chat_id: row.get(1)?,
-                coin: row.get(2)?,
-                token: row.get(3)?  ,
-                cron_schedule: row.get(4)?,
-                is_active: row.get(5)?,
-                created_at: row.get::<_, DateTime<Utc>>(6)?,
-                updated_at: row.get::<_, DateTime<Utc>>(7)?,
-                last_triggered: row.get::<_, Option<DateTime<Utc>>>(8)?,
-                next_trigger: row.get::<_, Option<DateTime<Utc>>>(9)?,
-            })
-        })?.collect::<Result<Vec<CronAlert>>>()?;
+        let alerts = stmt
+            .query_map([], |row| {
+                Ok(CronAlert {
+                    id: row.get(0)?,
+                    chat_id: row.get(1)?,
+                    coin: row.get(2)?,
+                    token: row.get(3)?,
+                    cron_schedule: row.get(4)?,
+                    is_active: row.get(5)?,
+                    created_at: row.get::<_, DateTime<Utc>>(6)?,
+                    updated_at: row.get::<_, DateTime<Utc>>(7)?,
+                    last_triggered: row.get::<_, Option<DateTime<Utc>>>(8)?,
+                    next_trigger: row.get::<_, Option<DateTime<Utc>>>(9)?,
+                })
+            })?
+            .collect::<Result<Vec<CronAlert>>>()?;
         Ok(alerts)
     }
 
     pub async fn get_cron_alerts_for_chat(&self, chat_id: ChatId) -> Result<Vec<CronAlert>> {
         let conn_guard = self.conn.lock().await;
-        let mut stmt = conn_guard.prepare("SELECT * FROM cron_alerts WHERE chat_id = ? AND is_active = true")?;
-        let alerts = stmt.query_map([chat_id.0], |row| {
-            Ok(CronAlert {
-                id: row.get(0)?,
-                chat_id: row.get(1)?,
-                coin: row.get(2)?,
-                token: row.get(3)?,
-                cron_schedule: row.get(4)?,
-                is_active: row.get(5)?,
-                created_at: row.get::<_, DateTime<Utc>>(6)?,
-                updated_at: row.get::<_, DateTime<Utc>>(7)?,
-                last_triggered: row.get::<_, Option<DateTime<Utc>>>(8)?,
-                next_trigger: row.get::<_, Option<DateTime<Utc>>>(9)?,
-            })
-        })?.collect::<Result<Vec<CronAlert>>>()?;
+        let mut stmt = conn_guard
+            .prepare("SELECT * FROM cron_alerts WHERE chat_id = ? AND is_active = true")?;
+        let alerts = stmt
+            .query_map([chat_id.0], |row| {
+                Ok(CronAlert {
+                    id: row.get(0)?,
+                    chat_id: row.get(1)?,
+                    coin: row.get(2)?,
+                    token: row.get(3)?,
+                    cron_schedule: row.get(4)?,
+                    is_active: row.get(5)?,
+                    created_at: row.get::<_, DateTime<Utc>>(6)?,
+                    updated_at: row.get::<_, DateTime<Utc>>(7)?,
+                    last_triggered: row.get::<_, Option<DateTime<Utc>>>(8)?,
+                    next_trigger: row.get::<_, Option<DateTime<Utc>>>(9)?,
+                })
+            })?
+            .collect::<Result<Vec<CronAlert>>>()?;
         Ok(alerts)
     }
 
     pub async fn get_next_trigger_cron_alerts(&self) -> Result<Vec<CronAlert>> {
         let conn_guard = self.conn.lock().await;
-        let mut stmt = conn_guard.prepare("SELECT * FROM cron_alerts WHERE next_trigger <= CURRENT_TIMESTAMP")?;
-        let alerts = stmt.query_map([], |row| {
-            Ok(CronAlert {
-                id: row.get(0)?,
-                chat_id: row.get(1)?,
-                coin: row.get(2)?,
-                token: row.get(3)?,
-                cron_schedule: row.get(4)?,
-                is_active: row.get(5)?,
-                created_at: row.get::<_, DateTime<Utc>>(6)?,
-                updated_at: row.get::<_, DateTime<Utc>>(7)?,
-                last_triggered: row.get::<_, Option<DateTime<Utc>>>(8)?,
-                next_trigger: row.get::<_, Option<DateTime<Utc>>>(9)?,
-            })
-        })?.collect::<Result<Vec<CronAlert>>>()?;
+        let mut stmt = conn_guard
+            .prepare("SELECT * FROM cron_alerts WHERE next_trigger <= CURRENT_TIMESTAMP")?;
+        let alerts = stmt
+            .query_map([], |row| {
+                Ok(CronAlert {
+                    id: row.get(0)?,
+                    chat_id: row.get(1)?,
+                    coin: row.get(2)?,
+                    token: row.get(3)?,
+                    cron_schedule: row.get(4)?,
+                    is_active: row.get(5)?,
+                    created_at: row.get::<_, DateTime<Utc>>(6)?,
+                    updated_at: row.get::<_, DateTime<Utc>>(7)?,
+                    last_triggered: row.get::<_, Option<DateTime<Utc>>>(8)?,
+                    next_trigger: row.get::<_, Option<DateTime<Utc>>>(9)?,
+                })
+            })?
+            .collect::<Result<Vec<CronAlert>>>()?;
         Ok(alerts)
     }
 
-    pub async fn update_cron_alert_last_triggered(&self, alert_id: i64, next_trigger: DateTime<Utc>) -> Result<()> {
+    pub async fn update_cron_alert_last_triggered(
+        &self,
+        alert_id: i64,
+        next_trigger: DateTime<Utc>,
+    ) -> Result<()> {
         let conn_guard = self.conn.lock().await;
-        let mut stmt = conn_guard.prepare(r#"
+        let mut stmt = conn_guard.prepare(
+            r#"
             UPDATE cron_alerts SET 
             last_triggered = CURRENT_TIMESTAMP, 
             updated_at = CURRENT_TIMESTAMP, 
             next_trigger = ?
             WHERE id = ?
-            "#)?;
+            "#,
+        )?;
         stmt.execute(params![next_trigger, alert_id])?;
         Ok(())
     }
 
     pub async fn deactivate_cron_alert(&self, alert_id: i64) -> Result<()> {
         let conn_guard = self.conn.lock().await;
-        let mut stmt = conn_guard.prepare("UPDATE cron_alerts SET is_active = false, updated_at = CURRENT_TIMESTAMP WHERE id = ?")?;
+        let mut stmt = conn_guard.prepare(
+            "UPDATE cron_alerts SET is_active = false, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+        )?;
         stmt.execute([alert_id])?;
         Ok(())
     }
@@ -315,7 +375,9 @@ mod tests {
         let temp_file = NamedTempFile::new().expect("Failed to create temp file");
         let db = Database::new(temp_file.path().to_str().unwrap())
             .expect("Failed to create test database");
-        db.initialize().await.expect("Failed to initialize database");
+        db.initialize()
+            .await
+            .expect("Failed to initialize database");
         (db, temp_file)
     }
 
@@ -341,7 +403,8 @@ mod tests {
             .await
             .expect("Insert should succeed");
 
-        let alerts = db.get_all_alerts_for_chat(ChatId(12345))
+        let alerts = db
+            .get_all_alerts_for_chat(ChatId(12345))
             .await
             .expect("Query should succeed");
 
@@ -357,9 +420,15 @@ mod tests {
     async fn test_get_unique_tokens() {
         let (db, _temp) = setup_test_db().await;
 
-        db.insert_alert("0x123", ChatId(12345), "HYPE", "@1", 25.0).await.unwrap();
-        db.insert_alert("0x123", ChatId(12345), "SOL", "@2", 150.0).await.unwrap();
-        db.insert_alert("0x123", ChatId(12345), "HYPE", "@1", 30.0).await.unwrap(); // Same token
+        db.insert_alert("0x123", ChatId(12345), "HYPE", "@1", 25.0)
+            .await
+            .unwrap();
+        db.insert_alert("0x123", ChatId(12345), "SOL", "@2", 150.0)
+            .await
+            .unwrap();
+        db.insert_alert("0x123", ChatId(12345), "HYPE", "@1", 30.0)
+            .await
+            .unwrap(); // Same token
 
         let tokens = db.get_all_unique_tokens().await.unwrap();
 
@@ -417,7 +486,8 @@ mod tests {
             .await
             .expect("Insert should succeed");
 
-        let cron_alerts = db.get_cron_alerts_for_chat(ChatId(12345))
+        let cron_alerts = db
+            .get_cron_alerts_for_chat(ChatId(12345))
             .await
             .expect("Query should succeed");
 
@@ -489,9 +559,15 @@ mod tests {
     async fn test_multiple_alerts_for_different_chats() {
         let (db, _temp) = setup_test_db().await;
 
-        db.insert_alert("0x123", ChatId(11111), "HYPE", "@1", 25.0).await.unwrap();
-        db.insert_alert("0x123", ChatId(22222), "SOL", "@2", 150.0).await.unwrap();
-        db.insert_alert("0x123", ChatId(11111), "BTC", "@3", 50000.0).await.unwrap();
+        db.insert_alert("0x123", ChatId(11111), "HYPE", "@1", 25.0)
+            .await
+            .unwrap();
+        db.insert_alert("0x123", ChatId(22222), "SOL", "@2", 150.0)
+            .await
+            .unwrap();
+        db.insert_alert("0x123", ChatId(11111), "BTC", "@3", 50000.0)
+            .await
+            .unwrap();
 
         let chat1_alerts = db.get_all_alerts_for_chat(ChatId(11111)).await.unwrap();
         let chat2_alerts = db.get_all_alerts_for_chat(ChatId(22222)).await.unwrap();

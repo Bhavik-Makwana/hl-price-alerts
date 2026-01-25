@@ -1,6 +1,6 @@
+use crate::db::CronAlert;
 use std::collections::HashMap;
 use teloxide::types::ChatId;
-use crate::db::CronAlert;
 
 /// Groups cron alerts by chat_id for batch sending within the same minute
 pub struct AlertBatcher;
@@ -74,9 +74,7 @@ mod tests {
 
     #[test]
     fn test_batch_single_alert() {
-        let alerts = vec![
-            (make_cron_alert(12345, "HYPE"), 25.0),
-        ];
+        let alerts = vec![(make_cron_alert(12345, "HYPE"), 25.0)];
 
         let batched = AlertBatcher::batch_alerts(alerts);
 
@@ -136,10 +134,7 @@ mod tests {
     fn test_format_multiple_alerts() {
         let batched = BatchedAlert {
             chat_id: ChatId(12345),
-            alerts: vec![
-                ("HYPE".to_string(), 25.0),
-                ("SOL".to_string(), 150.0),
-            ],
+            alerts: vec![("HYPE".to_string(), 25.0), ("SOL".to_string(), 150.0)],
         };
 
         let msg = AlertBatcher::format_message(&batched);

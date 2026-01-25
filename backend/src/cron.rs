@@ -34,19 +34,31 @@ impl CronService {
     }
 
     pub async fn get_cron_alerts_for_chat(&self, chat_id: ChatId) -> crate::Result<Vec<CronAlert>> {
-        self.db.get_cron_alerts_for_chat(chat_id).await.map_err(|e| e.into())
+        self.db
+            .get_cron_alerts_for_chat(chat_id)
+            .await
+            .map_err(|e| e.into())
     }
 
     pub async fn deactivate_cron_alert(&self, alert_id: i64) -> crate::Result<()> {
-        self.db.deactivate_cron_alert(alert_id).await.map_err(|e| e.into())
+        self.db
+            .deactivate_cron_alert(alert_id)
+            .await
+            .map_err(|e| e.into())
     }
 
     pub async fn delete_cron_alert(&self, alert_id: i64) -> crate::Result<()> {
-        self.db.delete_cron_alert(alert_id).await.map_err(|e| e.into())
+        self.db
+            .delete_cron_alert(alert_id)
+            .await
+            .map_err(|e| e.into())
     }
 
     pub async fn get_triggered_cron_alerts(&self) -> crate::Result<Vec<CronAlert>> {
-        self.db.get_next_trigger_cron_alerts().await.map_err(|e| e.into())
+        self.db
+            .get_next_trigger_cron_alerts()
+            .await
+            .map_err(|e| e.into())
     }
 
     pub async fn mark_cron_alert_triggered(
@@ -61,28 +73,46 @@ impl CronService {
     }
 
     pub async fn get_price(&self, token: &str) -> crate::Result<f64> {
-        let all_mids = self.info_client.lock().await.all_mids().await
+        let all_mids = self
+            .info_client
+            .lock()
+            .await
+            .all_mids()
+            .await
             .map_err(|e| crate::AppError::HyperliquidSdk(e.to_string()))?;
-        let price_str = all_mids.get(token)
-            .ok_or_else(|| crate::AppError::TokenNotFound(format!("Token '{}' not found in price data", token)))?;
-        let price = price_str.parse::<f64>()
-            .map_err(|e| crate::AppError::PriceParse(format!("Failed to parse price '{}': {}", price_str, e)))?;
+        let price_str = all_mids.get(token).ok_or_else(|| {
+            crate::AppError::TokenNotFound(format!("Token '{}' not found in price data", token))
+        })?;
+        let price = price_str.parse::<f64>().map_err(|e| {
+            crate::AppError::PriceParse(format!("Failed to parse price '{}': {}", price_str, e))
+        })?;
         Ok(price)
     }
 
     async fn get_token(&self, coin: &str) -> crate::Result<String> {
-        let spot_meta = self.info_client.lock().await.spot_meta().await
+        let spot_meta = self
+            .info_client
+            .lock()
+            .await
+            .spot_meta()
+            .await
             .map_err(|e| crate::AppError::HyperliquidSdk(e.to_string()))?;
         let universe = spot_meta.universe;
         let tokens = spot_meta.tokens;
-        let token_index = tokens.iter()
+        let token_index = tokens
+            .iter()
             .find(|t| t.name == coin)
             .ok_or_else(|| crate::AppError::TokenNotFound(format!("Coin '{}' not found", coin)))?
             .index;
         let token = universe
             .iter()
             .find(|t| t.tokens[0] == token_index)
-            .ok_or_else(|| crate::AppError::TokenNotFound(format!("Token for coin '{}' not found in universe", coin)))?
+            .ok_or_else(|| {
+                crate::AppError::TokenNotFound(format!(
+                    "Token for coin '{}' not found in universe",
+                    coin
+                ))
+            })?
             .name
             .clone();
         log::debug!("Token: {}", token);
@@ -92,25 +122,30 @@ impl CronService {
     pub async fn create_schedule(&self, schedule: &str, time: &str) -> crate::Result<String> {
         let time_parts: Vec<&str> = time.split(':').collect();
         if time_parts.len() != 2 {
-            return Err(crate::AppError::InvalidTimeFormat(
-                format!("Expected HH:MM format, got '{}'", time)
-            ));
+            return Err(crate::AppError::InvalidTimeFormat(format!(
+                "Expected HH:MM format, got '{}'",
+                time
+            )));
         }
-        let hour: i32 = time_parts[0].parse()
-            .map_err(|_| crate::AppError::InvalidTimeFormat(format!("Invalid hour: {}", time_parts[0])))?;
-        let minute: i32 = time_parts[1].parse()
-            .map_err(|_| crate::AppError::InvalidTimeFormat(format!("Invalid minute: {}", time_parts[1])))?;
+        let hour: i32 = time_parts[0].parse().map_err(|_| {
+            crate::AppError::InvalidTimeFormat(format!("Invalid hour: {}", time_parts[0]))
+        })?;
+        let minute: i32 = time_parts[1].parse().map_err(|_| {
+            crate::AppError::InvalidTimeFormat(format!("Invalid minute: {}", time_parts[1]))
+        })?;
 
         // Validate hour and minute ranges
         if !(0..24).contains(&hour) {
-            return Err(crate::AppError::InvalidTimeFormat(
-                format!("Hour must be 0-23, got {}", hour)
-            ));
+            return Err(crate::AppError::InvalidTimeFormat(format!(
+                "Hour must be 0-23, got {}",
+                hour
+            )));
         }
         if !(0..60).contains(&minute) {
-            return Err(crate::AppError::InvalidTimeFormat(
-                format!("Minute must be 0-59, got {}", minute)
-            ));
+            return Err(crate::AppError::InvalidTimeFormat(format!(
+                "Minute must be 0-59, got {}",
+                minute
+            )));
         }
 
         match schedule {
@@ -134,16 +169,20 @@ impl CronService {
                     .iter()
                     .find(|(day, _)| *day == schedule_lower.as_str())
                     .map(|(_, num)| *num)
-                    .ok_or_else(|| crate::AppError::InvalidTimeFormat(
-                        format!("Invalid schedule: {}", schedule)
-                    ))?;
+                    .ok_or_else(|| {
+                        crate::AppError::InvalidTimeFormat(format!(
+                            "Invalid schedule: {}",
+                            schedule
+                        ))
+                    })?;
                 let cron_schedule = format!("{} {} * * {}", minute, hour, schedule_num);
                 Ok(cron_schedule)
             }
 
-            _ => Err(crate::AppError::InvalidTimeFormat(
-                format!("Invalid schedule type '{}'. Use 'daily' or a day name (monday, tuesday, etc.)", schedule)
-            )),
+            _ => Err(crate::AppError::InvalidTimeFormat(format!(
+                "Invalid schedule type '{}'. Use 'daily' or a day name (monday, tuesday, etc.)",
+                schedule
+            ))),
         }
     }
 }
@@ -160,7 +199,9 @@ mod tests {
         let temp_file = NamedTempFile::new().expect("Failed to create temp file");
         let db = Database::new(temp_file.path().to_str().unwrap())
             .expect("Failed to create test database");
-        db.initialize().await.expect("Failed to initialize database");
+        db.initialize()
+            .await
+            .expect("Failed to initialize database");
         (db, temp_file)
     }
 
@@ -175,7 +216,7 @@ mod tests {
         let info_client = Arc::new(Mutex::new(
             InfoClient::new(None, Some(hyperliquid_rust_sdk::BaseUrl::Mainnet))
                 .await
-                .unwrap()
+                .unwrap(),
         ));
         let service = CronService::new(db, info_client);
 
@@ -189,7 +230,7 @@ mod tests {
         let info_client = Arc::new(Mutex::new(
             InfoClient::new(None, Some(hyperliquid_rust_sdk::BaseUrl::Mainnet))
                 .await
-                .unwrap()
+                .unwrap(),
         ));
         let service = CronService::new(db, info_client);
 
@@ -203,7 +244,7 @@ mod tests {
         let info_client = Arc::new(Mutex::new(
             InfoClient::new(None, Some(hyperliquid_rust_sdk::BaseUrl::Mainnet))
                 .await
-                .unwrap()
+                .unwrap(),
         ));
         let service = CronService::new(db, info_client);
 
@@ -217,7 +258,7 @@ mod tests {
         let info_client = Arc::new(Mutex::new(
             InfoClient::new(None, Some(hyperliquid_rust_sdk::BaseUrl::Mainnet))
                 .await
-                .unwrap()
+                .unwrap(),
         ));
         let service = CronService::new(db, info_client);
 
@@ -231,7 +272,7 @@ mod tests {
         let info_client = Arc::new(Mutex::new(
             InfoClient::new(None, Some(hyperliquid_rust_sdk::BaseUrl::Mainnet))
                 .await
-                .unwrap()
+                .unwrap(),
         ));
         let service = CronService::new(db, info_client);
 
@@ -245,7 +286,7 @@ mod tests {
         let info_client = Arc::new(Mutex::new(
             InfoClient::new(None, Some(hyperliquid_rust_sdk::BaseUrl::Mainnet))
                 .await
-                .unwrap()
+                .unwrap(),
         ));
         let service = CronService::new(db, info_client);
 
@@ -259,7 +300,7 @@ mod tests {
         let info_client = Arc::new(Mutex::new(
             InfoClient::new(None, Some(hyperliquid_rust_sdk::BaseUrl::Mainnet))
                 .await
-                .unwrap()
+                .unwrap(),
         ));
         let service = CronService::new(db, info_client);
 
@@ -274,7 +315,7 @@ mod tests {
         let info_client = Arc::new(Mutex::new(
             InfoClient::new(None, Some(hyperliquid_rust_sdk::BaseUrl::Mainnet))
                 .await
-                .unwrap()
+                .unwrap(),
         ));
         let service = CronService::new(db, info_client);
 
@@ -291,7 +332,7 @@ mod tests {
         let info_client = Arc::new(Mutex::new(
             InfoClient::new(None, Some(hyperliquid_rust_sdk::BaseUrl::Mainnet))
                 .await
-                .unwrap()
+                .unwrap(),
         ));
         let service = CronService::new(db, info_client);
 
@@ -305,7 +346,7 @@ mod tests {
         let info_client = Arc::new(Mutex::new(
             InfoClient::new(None, Some(hyperliquid_rust_sdk::BaseUrl::Mainnet))
                 .await
-                .unwrap()
+                .unwrap(),
         ));
         let service = CronService::new(db, info_client);
 
