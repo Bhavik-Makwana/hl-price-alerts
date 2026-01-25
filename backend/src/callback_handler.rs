@@ -686,7 +686,10 @@ Commands:
                 Ok(true)
             }
             UserState::WaitingForCronTime { coin, schedule } => {
-                info!("Processing cron time input for chat_id={}, coin={}, schedule={}, time='{}'", chat_id, coin, schedule, text);
+                info!(
+                    "Processing cron time input for chat_id={}, coin={}, schedule={}, time='{}'",
+                    chat_id, coin, schedule, text
+                );
                 // Validate time format HH:MM
                 let time = text.trim();
                 if !time.contains(':') || time.len() != 5 {
@@ -751,7 +754,10 @@ Commands:
                 Ok(true)
             }
             UserState::Idle => {
-                debug!("Received text input '{}' from chat_id={} but state is Idle, ignoring", text, chat_id);
+                debug!(
+                    "Received text input '{}' from chat_id={} but state is Idle, ignoring",
+                    text, chat_id
+                );
                 Ok(false)
             }
         }
