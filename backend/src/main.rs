@@ -40,6 +40,7 @@ fn schema() -> UpdateHandler<Box<dyn std::error::Error + Send + Sync + 'static>>
         .filter(|msg: teloxide::types::Message| msg.text().is_some() && !msg.text().unwrap_or("").starts_with('/'))
         .endpoint(
             |bot: Bot, msg: teloxide::types::Message, callback_handler: CallbackHandler| async move {
+                #[allow(clippy::collapsible_if)]
                 if let Some(text) = msg.text() {
                     if let Err(e) = callback_handler.handle_text_input(&bot, msg.chat.id, text).await {
                         log::error!("Error handling text input from chat {}: {}", msg.chat.id, e);
