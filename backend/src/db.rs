@@ -309,8 +309,9 @@ impl Database {
 
     pub async fn get_next_trigger_cron_alerts(&self) -> Result<Vec<CronAlert>> {
         let conn_guard = self.conn.lock().await;
-        let mut stmt = conn_guard
-            .prepare("SELECT * FROM cron_alerts WHERE next_trigger <= CURRENT_TIMESTAMP")?;
+        let mut stmt = conn_guard.prepare(
+            "SELECT * FROM cron_alerts WHERE is_active = true AND next_trigger <= CURRENT_TIMESTAMP",
+        )?;
         let alerts = stmt
             .query_map([], |row| {
                 Ok(CronAlert {
@@ -497,6 +498,31 @@ mod tests {
         assert_eq!(cron_alerts[0].cron_schedule, "0 8 * * *");
         assert!(cron_alerts[0].is_active);
         assert!(cron_alerts[0].next_trigger.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_get_next_trigger_cron_alerts_excludes_inactive() {
+        let (db, _temp) = setup_test_db().await;
+
+        db.insert_cron_alert(ChatId(12345), "HYPE", "@1", "0 8 * * *")
+            .await
+            .unwrap();
+        let alert_id = db.get_all_cron_alerts().await.unwrap()[0].id;
+
+        // Force next_trigger into the past so the alert is due.
+        let past = Utc::now() - chrono::Duration::minutes(1);
+        db.update_cron_alert_last_triggered(alert_id, past)
+            .await
+            .unwrap();
+
+        let due = db.get_next_trigger_cron_alerts().await.unwrap();
+        assert_eq!(due.len(), 1);
+
+        // Once deactivated, a due alert must not be returned as triggerable.
+        db.deactivate_cron_alert(alert_id).await.unwrap();
+
+        let due_after_deactivation = db.get_next_trigger_cron_alerts().await.unwrap();
+        assert!(due_after_deactivation.is_empty());
     }
 
     #[tokio::test]
