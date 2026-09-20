@@ -53,7 +53,12 @@ jobs:
       run:
         working-directory: backend
     steps:
+      # clean: false keeps backend/target/ across runs so this incrementally
+      # rebuilds instead of recompiling the whole dependency tree from
+      # scratch every push (this VM has a single shared vCPU).
       - uses: actions/checkout@v4
+        with:
+          clean: false
 
       - name: Build release binary
         run: cargo build --release
