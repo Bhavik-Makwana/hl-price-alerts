@@ -497,11 +497,27 @@ Commands:
         message_id: Option<MessageId>,
         alert_id: i64,
     ) -> Result<(), AppError> {
-        match self.alert_service.delete_alert(alert_id).await {
-            Ok(_) => {
+        match self
+            .alert_service
+            .delete_alert(ChatId(chat_id), alert_id)
+            .await
+        {
+            Ok(true) => {
                 info!("Deleted alert {} for chat {}", alert_id, chat_id);
                 // Show updated alerts list
                 self.handle_menu_alerts(bot, chat_id, message_id).await?;
+            }
+            Ok(false) => {
+                warn!(
+                    "Chat {} tried to delete alert {} it does not own",
+                    chat_id, alert_id
+                );
+                let text = format!("Failed to delete alert #{}. It may not exist.", alert_id);
+                if let Some(msg_id) = message_id {
+                    bot.edit_message_text(ChatId(chat_id), msg_id, text)
+                        .reply_markup(keyboards::main_menu_keyboard())
+                        .await?;
+                }
             }
             Err(e) => {
                 error!("Failed to delete alert {}: {}", alert_id, e);
@@ -523,11 +539,30 @@ Commands:
         message_id: Option<MessageId>,
         alert_id: i64,
     ) -> Result<(), AppError> {
-        match self.cron_service.delete_cron_alert(alert_id).await {
-            Ok(_) => {
+        match self
+            .cron_service
+            .delete_cron_alert(ChatId(chat_id), alert_id)
+            .await
+        {
+            Ok(true) => {
                 info!("Deleted cron alert {} for chat {}", alert_id, chat_id);
                 // Show updated cron alerts list
                 self.handle_menu_cron(bot, chat_id, message_id).await?;
+            }
+            Ok(false) => {
+                warn!(
+                    "Chat {} tried to delete cron alert {} it does not own",
+                    chat_id, alert_id
+                );
+                let text = format!(
+                    "Failed to delete cron alert #{}. It may not exist.",
+                    alert_id
+                );
+                if let Some(msg_id) = message_id {
+                    bot.edit_message_text(ChatId(chat_id), msg_id, text)
+                        .reply_markup(keyboards::main_menu_keyboard())
+                        .await?;
+                }
             }
             Err(e) => {
                 error!("Failed to delete cron alert {}: {}", alert_id, e);

@@ -38,119 +38,38 @@ jobs:
       - name: Run tests
         run: cargo test --all-features
 
-  build:
-    name: Build Release
-    runs-on: ubuntu-latest
+  # Runs on the self-hosted runner living on the production VM itself, so the
+  # binary is built for the exact machine it runs on and "deploying" is just
+  # restarting a local systemd --user service. This job only ever runs for
+  # pushes to main (never for pull_request events), so untrusted PRs never
+  # execute code on the production host.
+  deploy:
+    name: Build & Deploy
+    runs-on: [self-hosted, hl-alerts-vm]
     needs: test
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    environment: production
     defaults:
       run:
         working-directory: backend
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: x86_64-unknown-linux-gnu
-
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: backend -> target
-
       - name: Build release binary
-        run: cargo build --release --target x86_64-unknown-linux-gnu
+        run: cargo build --release
 
-      - name: Strip binary
-        run: strip target/x86_64-unknown-linux-gnu/release/backend
+      - name: Install binary
+        run: |
+          set -euo pipefail
+          APP_DIR="$HOME/apps/hyperliquid-alerts"
+          mkdir -p "$APP_DIR"
+          install -m 755 target/release/backend "$APP_DIR/hyperliquid-alerts.new"
+          mv "$APP_DIR/hyperliquid-alerts.new" "$APP_DIR/hyperliquid-alerts"
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: hyperliquid-alerts-linux
-          path: backend/target/x86_64-unknown-linux-gnu/release/backend
-          retention-days: 7
-
-  deploy:
-    name: Deploy to Production
-    runs-on: ubuntu-latest
-    needs: build
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    environment: production
-    steps:
-      - name: Download artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: hyperliquid-alerts-linux
-
-      - name: Deploy to server
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.VM_IP }}
-          username: root
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          script: |
-            # Stop existing service (ignore if not exists)
-            systemctl stop hyperliquid-alerts || true
-
-            # Create directory if not exists
-            mkdir -p /opt/hyperliquid-alerts
-
-            # Backup existing binary if exists
-            if [ -f /opt/hyperliquid-alerts/hyperliquid-alerts ]; then
-              mv /opt/hyperliquid-alerts/hyperliquid-alerts /opt/hyperliquid-alerts/hyperliquid-alerts.backup
-            fi
-
-      - name: Copy binary to server
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ secrets.VM_IP }}
-          username: root
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          source: backend
-          target: /opt/hyperliquid-alerts/
-
-      - name: Setup and start service
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.VM_IP }}
-          username: root
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          script: |
-            # Move and rename binary
-            mv /opt/hyperliquid-alerts/backend /opt/hyperliquid-alerts/hyperliquid-alerts
-            chmod +x /opt/hyperliquid-alerts/hyperliquid-alerts
-
-            # Create systemd service file if not exists
-            cat > /etc/systemd/system/hyperliquid-alerts.service << 'SERVICEFILE'
-            [Unit]
-            Description=Hyperliquid Alerts Telegram Bot
-            After=network.target
-
-            [Service]
-            Type=simple
-            User=root
-            WorkingDirectory=/opt/hyperliquid-alerts
-            ExecStart=/opt/hyperliquid-alerts/hyperliquid-alerts
-            Restart=always
-            RestartSec=10
-            EnvironmentFile=/opt/hyperliquid-alerts/.env
-
-            # Logging
-            StandardOutput=journal
-            StandardError=journal
-            SyslogIdentifier=hyperliquid-alerts
-
-            [Install]
-            WantedBy=multi-user.target
-            SERVICEFILE
-
-            # Reload systemd and start service
-            systemctl daemon-reload
-            systemctl enable hyperliquid-alerts
-            systemctl start hyperliquid-alerts
-
-            # Wait and check status
-            sleep 3
-            systemctl status hyperliquid-alerts --no-pager
+      - name: Restart service
+        run: |
+          set -euo pipefail
+          systemctl --user restart hyperliquid-alerts.service
+          sleep 3
+          systemctl --user is-active hyperliquid-alerts.service
+          systemctl --user status hyperliquid-alerts.service --no-pager -l | tail -n 20
