@@ -526,7 +526,9 @@ mod tests {
         assert_eq!(due.len(), 1);
 
         // Once deactivated, a due alert must not be returned as triggerable.
-        db.deactivate_cron_alert(alert_id).await.unwrap();
+        db.deactivate_cron_alert(ChatId(12345), alert_id)
+            .await
+            .unwrap();
 
         let due_after_deactivation = db.get_next_trigger_cron_alerts().await.unwrap();
         assert!(due_after_deactivation.is_empty());

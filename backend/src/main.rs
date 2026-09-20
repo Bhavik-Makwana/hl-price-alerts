@@ -6,7 +6,7 @@ use backend::{
     notification::{Command, NotificationService},
 };
 use cron_parser::parse;
-use hyperliquid_rust_sdk::{BaseUrl, InfoClient, Subscription};
+use hyperliquid_rust_sdk::{BaseUrl, InfoClient};
 use log::{debug, error, info, warn};
 use std::sync::Arc;
 use teloxide::dispatching::{UpdateFilterExt, UpdateHandler};
@@ -81,7 +81,8 @@ async fn main() -> anyhow::Result<()> {
             .map_err(|e| anyhow::anyhow!("Failed to create InfoClient: {}", e))?,
     ));
 
-    let alert_service = AlertService::new(db.clone(), info_client.clone());
+    let (sender, mut receiver) = unbounded_channel();
+    let alert_service = AlertService::new(db.clone(), info_client.clone(), sender);
     let cron_service = CronService::new(db.clone(), info_client.clone());
 
     // Log existing alerts at startup
@@ -107,29 +108,14 @@ async fn main() -> anyhow::Result<()> {
 
     let bot = teloxide::Bot::from_env();
 
-    // Subscribe to price updates for all tracked tokens
-    let (sender, mut receiver) = unbounded_channel();
-    let mut subscription_ids = Vec::new();
+    // Subscribe to price updates for all tokens that already have alerts. New alerts
+    // created later dynamically subscribe via AlertService::ensure_subscribed, so this
+    // set of subscriptions is not fixed for the lifetime of the process.
     for token in tokens {
-        match info_client
-            .lock()
-            .await
-            .subscribe(
-                Subscription::ActiveAssetCtx {
-                    coin: token.clone(),
-                },
-                sender.clone(),
-            )
-            .await
-        {
-            Ok(subscription_id) => {
-                subscription_ids.push(subscription_id);
-                debug!("Subscribed to {}", token);
-            }
-            Err(e) => error!("Failed to subscribe to {}: {}", token, e),
-        }
+        alert_service.ensure_subscribed(&token).await;
     }
 
+    let alert_service_for_shutdown = alert_service.clone();
     let alert_service_for_price_updates = alert_service.clone();
     let alert_service_for_cooldowns = alert_service.clone();
     let cron_service_for_worker = cron_service.clone();
@@ -154,7 +140,7 @@ async fn main() -> anyhow::Result<()> {
         // Telegram dispatcher (commands + callbacks + text input)
         _ = dispatcher.dispatch() => {
             info!("Telegram bot stopped, unsubscribing from price updates");
-            for subscription_id in subscription_ids {
+            for subscription_id in alert_service_for_shutdown.subscription_ids().await {
                 if let Err(e) = info_client.lock().await.unsubscribe(subscription_id).await {
                     error!("Failed to unsubscribe: {}", e);
                 }
