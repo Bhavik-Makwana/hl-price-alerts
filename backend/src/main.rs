@@ -173,8 +173,14 @@ async fn main() -> anyhow::Result<()> {
                     }
                 };
 
-                // Get triggered alerts
-                let alerts = match alert_service_for_price_updates.get_triggered_alerts(mark_px).await {
+                // Get triggered alerts for this specific coin only - mark_px belongs to
+                // order_updates.data.coin, not to every subscribed coin, so alerts must
+                // be scoped to it to avoid firing on an unrelated coin's price crossing
+                // this one's target band.
+                let alerts = match alert_service_for_price_updates
+                    .get_triggered_alerts(&order_updates.data.coin, mark_px)
+                    .await
+                {
                     Ok(alerts) => alerts,
                     Err(e) => {
                         error!("Failed to get triggered alerts: {}", e);
