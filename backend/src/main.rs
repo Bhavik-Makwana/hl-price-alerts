@@ -7,7 +7,7 @@ use backend::{
 };
 use cron_parser::parse;
 use hyperliquid_rust_sdk::{BaseUrl, InfoClient, Subscription};
-use log::{debug, error, info};
+use log::{debug, error, info, warn};
 use std::sync::Arc;
 use teloxide::dispatching::{UpdateFilterExt, UpdateHandler};
 use teloxide::dptree;
@@ -163,7 +163,19 @@ async fn main() -> anyhow::Result<()> {
 
         // Price monitoring worker
         _ = async move {
-            while let Some(hyperliquid_rust_sdk::Message::ActiveSpotAssetCtx(order_updates)) = receiver.recv().await {
+            loop {
+                let order_updates = match receiver.recv().await {
+                    Some(hyperliquid_rust_sdk::Message::ActiveSpotAssetCtx(order_updates)) => order_updates,
+                    Some(other) => {
+                        debug!("Ignoring non-price message on price feed: {:?}", other);
+                        continue;
+                    }
+                    None => {
+                        warn!("Price update channel closed, stopping price monitoring");
+                        break;
+                    }
+                };
+
                 debug!("Received order update: {:?}", order_updates);
 
                 // Parse the mark price
