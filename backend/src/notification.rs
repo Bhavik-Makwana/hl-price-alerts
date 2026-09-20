@@ -215,10 +215,17 @@ impl NotificationService {
                 }
             },
             Command::DeleteCronAlert { id } => {
-                match self.cron_service.delete_cron_alert(id).await {
-                    Ok(_) => {
+                match self.cron_service.delete_cron_alert(msg.chat.id, id).await {
+                    Ok(true) => {
                         bot.send_message(msg.chat.id, format!("✅ Cron alert {} deleted.", id))
                             .await?
+                    }
+                    Ok(false) => {
+                        bot.send_message(
+                            msg.chat.id,
+                            format!("❌ Failed to delete cron alert {}. It may not exist.", id),
+                        )
+                        .await?
                     }
                     Err(e) => {
                         log::error!("Failed to delete cron alert {}: {}", id, e);

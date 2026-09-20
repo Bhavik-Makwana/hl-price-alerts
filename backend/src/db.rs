@@ -232,11 +232,13 @@ impl Database {
         Ok(result)
     }
 
-    pub async fn delete_alert(&self, alert_id: i64) -> Result<()> {
+    /// Deletes an alert, scoped to the owning chat. Returns `true` if a row was deleted,
+    /// `false` if no alert with that id exists for this chat.
+    pub async fn delete_alert(&self, chat_id: ChatId, alert_id: i64) -> Result<bool> {
         let conn_guard = self.conn.lock().await;
-        let mut stmt = conn_guard.prepare("DELETE FROM alerts WHERE id = ?")?;
-        stmt.execute([alert_id])?;
-        Ok(())
+        let mut stmt = conn_guard.prepare("DELETE FROM alerts WHERE id = ? AND chat_id = ?")?;
+        let rows_affected = stmt.execute(params![alert_id, chat_id.0])?;
+        Ok(rows_affected > 0)
     }
 
     pub fn get_connection(&self) -> Arc<Mutex<Connection>> {
@@ -350,20 +352,25 @@ impl Database {
         Ok(())
     }
 
-    pub async fn deactivate_cron_alert(&self, alert_id: i64) -> Result<()> {
+    /// Deactivates a cron alert, scoped to the owning chat. Returns `true` if a row was
+    /// updated, `false` if no cron alert with that id exists for this chat.
+    pub async fn deactivate_cron_alert(&self, chat_id: ChatId, alert_id: i64) -> Result<bool> {
         let conn_guard = self.conn.lock().await;
         let mut stmt = conn_guard.prepare(
-            "UPDATE cron_alerts SET is_active = false, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            "UPDATE cron_alerts SET is_active = false, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND chat_id = ?",
         )?;
-        stmt.execute([alert_id])?;
-        Ok(())
+        let rows_affected = stmt.execute(params![alert_id, chat_id.0])?;
+        Ok(rows_affected > 0)
     }
 
-    pub async fn delete_cron_alert(&self, alert_id: i64) -> Result<()> {
+    /// Deletes a cron alert, scoped to the owning chat. Returns `true` if a row was
+    /// deleted, `false` if no cron alert with that id exists for this chat.
+    pub async fn delete_cron_alert(&self, chat_id: ChatId, alert_id: i64) -> Result<bool> {
         let conn_guard = self.conn.lock().await;
-        let mut stmt = conn_guard.prepare("DELETE FROM cron_alerts WHERE id = ?")?;
-        stmt.execute([alert_id])?;
-        Ok(())
+        let mut stmt =
+            conn_guard.prepare("DELETE FROM cron_alerts WHERE id = ? AND chat_id = ?")?;
+        let rows_affected = stmt.execute(params![alert_id, chat_id.0])?;
+        Ok(rows_affected > 0)
     }
 }
 
@@ -537,10 +544,30 @@ mod tests {
         assert_eq!(alerts_before.len(), 1);
         let alert_id = alerts_before[0].id;
 
-        db.delete_cron_alert(alert_id).await.unwrap();
+        let deleted = db.delete_cron_alert(ChatId(12345), alert_id).await.unwrap();
+        assert!(deleted);
 
         let alerts_after = db.get_all_cron_alerts().await.unwrap();
         assert_eq!(alerts_after.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_delete_cron_alert_wrong_chat_is_noop() {
+        let (db, _temp) = setup_test_db().await;
+
+        db.insert_cron_alert(ChatId(12345), "HYPE", "@1", "0 8 * * *")
+            .await
+            .unwrap();
+
+        let alerts_before = db.get_all_cron_alerts().await.unwrap();
+        let alert_id = alerts_before[0].id;
+
+        // A different chat should not be able to delete this alert.
+        let deleted = db.delete_cron_alert(ChatId(99999), alert_id).await.unwrap();
+        assert!(!deleted);
+
+        let alerts_after = db.get_all_cron_alerts().await.unwrap();
+        assert_eq!(alerts_after.len(), 1);
     }
 
     #[tokio::test]
@@ -554,11 +581,36 @@ mod tests {
         let alerts = db.get_all_cron_alerts().await.unwrap();
         let alert_id = alerts[0].id;
 
-        db.deactivate_cron_alert(alert_id).await.unwrap();
+        let deactivated = db
+            .deactivate_cron_alert(ChatId(12345), alert_id)
+            .await
+            .unwrap();
+        assert!(deactivated);
 
         // get_all_cron_alerts only returns active alerts
         let active_alerts = db.get_all_cron_alerts().await.unwrap();
         assert_eq!(active_alerts.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_deactivate_cron_alert_wrong_chat_is_noop() {
+        let (db, _temp) = setup_test_db().await;
+
+        db.insert_cron_alert(ChatId(12345), "HYPE", "@1", "0 8 * * *")
+            .await
+            .unwrap();
+
+        let alerts = db.get_all_cron_alerts().await.unwrap();
+        let alert_id = alerts[0].id;
+
+        let deactivated = db
+            .deactivate_cron_alert(ChatId(99999), alert_id)
+            .await
+            .unwrap();
+        assert!(!deactivated);
+
+        let active_alerts = db.get_all_cron_alerts().await.unwrap();
+        assert_eq!(active_alerts.len(), 1);
     }
 
     #[tokio::test]
@@ -600,5 +652,39 @@ mod tests {
 
         assert_eq!(chat1_alerts.len(), 2);
         assert_eq!(chat2_alerts.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_delete_alert_scoped_to_chat() {
+        let (db, _temp) = setup_test_db().await;
+
+        db.insert_alert("0x123", ChatId(11111), "HYPE", "@1", 25.0)
+            .await
+            .unwrap();
+
+        let alerts = db.get_all_alerts_for_chat(ChatId(11111)).await.unwrap();
+        let alert_id = alerts[0].id;
+
+        // A different chat cannot delete this alert.
+        let deleted = db.delete_alert(ChatId(22222), alert_id).await.unwrap();
+        assert!(!deleted);
+        assert_eq!(
+            db.get_all_alerts_for_chat(ChatId(11111))
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+
+        // The owning chat can.
+        let deleted = db.delete_alert(ChatId(11111), alert_id).await.unwrap();
+        assert!(deleted);
+        assert_eq!(
+            db.get_all_alerts_for_chat(ChatId(11111))
+                .await
+                .unwrap()
+                .len(),
+            0
+        );
     }
 }

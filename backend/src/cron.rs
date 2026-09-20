@@ -65,16 +65,24 @@ impl CronService {
             .map_err(|e| e.into())
     }
 
-    pub async fn deactivate_cron_alert(&self, alert_id: i64) -> crate::Result<()> {
+    /// Deactivates a cron alert, scoped to the owning chat. Returns `true` if a cron
+    /// alert was deactivated, `false` if no cron alert with that id exists for this chat.
+    pub async fn deactivate_cron_alert(
+        &self,
+        chat_id: ChatId,
+        alert_id: i64,
+    ) -> crate::Result<bool> {
         self.db
-            .deactivate_cron_alert(alert_id)
+            .deactivate_cron_alert(chat_id, alert_id)
             .await
             .map_err(|e| e.into())
     }
 
-    pub async fn delete_cron_alert(&self, alert_id: i64) -> crate::Result<()> {
+    /// Deletes a cron alert, scoped to the owning chat. Returns `true` if a cron alert
+    /// was deleted, `false` if no cron alert with that id exists for this chat.
+    pub async fn delete_cron_alert(&self, chat_id: ChatId, alert_id: i64) -> crate::Result<bool> {
         self.db
-            .delete_cron_alert(alert_id)
+            .delete_cron_alert(chat_id, alert_id)
             .await
             .map_err(|e| e.into())
     }
