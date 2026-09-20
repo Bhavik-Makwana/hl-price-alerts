@@ -1,18 +1,75 @@
 use crate::db::{AlertTable, Database};
-use hyperliquid_rust_sdk::InfoClient;
+use hyperliquid_rust_sdk::{InfoClient, Message, Subscription};
+use std::collections::HashMap;
 use std::sync::Arc;
 use teloxide::types::ChatId;
 use tokio::sync::Mutex;
+use tokio::sync::mpsc::UnboundedSender;
 
 #[derive(Clone)]
 pub struct AlertService {
     db: Database,
     info_client: Arc<Mutex<InfoClient>>,
+    price_sender: UnboundedSender<Message>,
+    /// Tokens with an active price-feed subscription, mapped to their subscription id.
+    subscriptions: Arc<Mutex<HashMap<String, u32>>>,
 }
 
 impl AlertService {
-    pub fn new(db: Database, info_client: Arc<Mutex<InfoClient>>) -> Self {
-        Self { db, info_client }
+    pub fn new(
+        db: Database,
+        info_client: Arc<Mutex<InfoClient>>,
+        price_sender: UnboundedSender<Message>,
+    ) -> Self {
+        Self {
+            db,
+            info_client,
+            price_sender,
+            subscriptions: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+
+    /// Ensures the given token has an active price-feed subscription, subscribing if
+    /// this is the first alert for it. Without this, alerts for a coin that had no
+    /// prior subscription would sit in the DB but never receive price updates until
+    /// the process restarted and re-subscribed from scratch.
+    pub async fn ensure_subscribed(&self, token: &str) {
+        {
+            let subscriptions = self.subscriptions.lock().await;
+            if subscriptions.contains_key(token) {
+                return;
+            }
+        }
+
+        let result = self
+            .info_client
+            .lock()
+            .await
+            .subscribe(
+                Subscription::ActiveAssetCtx {
+                    coin: token.to_string(),
+                },
+                self.price_sender.clone(),
+            )
+            .await;
+
+        match result {
+            Ok(subscription_id) => {
+                self.subscriptions
+                    .lock()
+                    .await
+                    .insert(token.to_string(), subscription_id);
+                log::debug!("Subscribed to price feed for {}", token);
+            }
+            Err(e) => {
+                log::error!("Failed to subscribe to price feed for {}: {}", token, e);
+            }
+        }
+    }
+
+    /// Ids of every price-feed subscription currently held, for cleanup on shutdown.
+    pub async fn subscription_ids(&self) -> Vec<u32> {
+        self.subscriptions.lock().await.values().copied().collect()
     }
 
     pub async fn get_triggered_alerts(&self, mark_px: f64) -> crate::Result<Vec<AlertTable>> {
@@ -60,8 +117,9 @@ impl AlertService {
         let token = self.get_token(coin).await?;
         self.db
             .insert_alert(public_key, chat_id, coin, &token, price)
-            .await
-            .map_err(|e| e.into())
+            .await?;
+        self.ensure_subscribed(&token).await;
+        Ok(())
     }
 
     pub async fn delete_alert(&self, alert_id: i64) -> crate::Result<()> {
