@@ -1,151 +1,53 @@
 # GitHub Actions Workflows
 
-This directory contains GitHub Actions workflows for building and deploying the Hyperliquid Alerts Rust application.
+This directory contains the CI/CD pipeline for the Hyperliquid Alerts bot.
 
-## Workflows
+## Workflow: `ci.yml`
 
-### 1. Build and Release (`build-and-release.yml`)
+**Triggers:** push and pull requests targeting `main`.
 
-**Triggers:**
-- Push to version tags (e.g., `v1.0.0`)
-- Manual workflow dispatch
+**Jobs:**
 
-**What it does:**
-- Cross-compiles the Rust binary for Linux (x86_64-unknown-linux-gnu)
-- Strips the binary to reduce size
-- Creates a tar.gz archive
-- Uploads artifacts for download
-- Creates a GitHub release (on tag push)
+1. **`test`** (runs on GitHub-hosted `ubuntu-latest`)
+   - `cargo fmt --check`, `cargo clippy -D warnings`, `cargo test`
+   - Runs for every push and pull request.
 
-**Usage:**
-```bash
-# Create and push a version tag
-git tag v1.0.0
-git push origin v1.0.0
+2. **`deploy`** (runs on a **self-hosted runner** installed on the production VM)
+   - Only runs for pushes to `main` (never for `pull_request` events, so
+     untrusted forks can never execute code on the production host).
+   - Builds the release binary directly on the target machine (no
+     cross-compilation, no artifact transfer, no SSH keys/secrets needed).
+   - Installs the binary to `~/apps/hyperliquid-alerts/hyperliquid-alerts` and
+     restarts the `hyperliquid-alerts.service` systemd user unit.
 
-# Or trigger manually from GitHub Actions tab
-```
+## Production host setup (one-time, already done)
 
-### 2. Deploy to Ubuntu (`deploy-to-ubuntu.yml`)
+The production VM runs everything as the unprivileged `agent` Linux user
+(no root, no passwordless sudo). Two persistent `systemd --user` services:
 
-**Triggers:**
-- After successful build workflow
-- Manual workflow dispatch
+- `github-runner.service` — the self-hosted Actions runner
+  (`~/actions-runner`), registered to this repo with labels
+  `self-hosted, linux, x64, hl-alerts-vm`.
+- `hyperliquid-alerts.service` — the bot itself, working directory
+  `~/apps/hyperliquid-alerts` (holds the binary, `alerts.db`, and `.env`
+  with `TELEGRAM_BOT_TOKEN` — never committed to git).
 
-**What it does:**
-- Downloads the built binary
-- Uploads to Ubuntu server via SSH
-- Sets up systemd service
-- Starts and enables the service
+`loginctl enable-linger agent` is set so both user services start on boot
+and keep running without an active login session.
 
-**Required Secrets:**
-- `SSH_PRIVATE_KEY`: Private SSH key for server access
-
-**Manual Inputs:**
-- `server_host`: Ubuntu server hostname or IP
-- `server_user`: SSH username (default: ubuntu)
-- `deploy_path`: Deployment path (default: /opt/hyperliquid-alerts)
-
-### 3. Simple Deploy (`simple-deploy.yml`)
-
-**Triggers:**
-- Manual workflow dispatch only
-
-**What it does:**
-- Downloads the built binary
-- Uploads to Ubuntu server via SSH
-- Sets basic permissions
-
-**Required Secrets:**
-- `SSH_PRIVATE_KEY`: Private SSH key for server access
-
-**Manual Inputs:**
-- `server_host`: Ubuntu server hostname or IP
-- `server_user`: SSH username (default: ubuntu)
-- `deploy_path`: Deployment path (default: /home/ubuntu/hyperliquid-alerts)
-
-## Setup Instructions
-
-### 1. Build and Release Setup
-
-No additional setup required. The workflow will automatically:
-- Install Rust toolchain
-- Install cross-compilation dependencies
-- Build the binary for Linux
-- Create releases on tag push
-
-### 2. Deployment Setup
-
-#### Option A: Full Deployment with Systemd
-
-1. **Generate SSH Key Pair:**
-   ```bash
-   ssh-keygen -t ed25519 -C "github-actions" -f ~/.ssh/github_actions_key
-   ```
-
-2. **Add Public Key to Ubuntu Server:**
-   ```bash
-   # On your Ubuntu server
-   cat ~/.ssh/github_actions_key.pub >> ~/.ssh/authorized_keys
-   chmod 600 ~/.ssh/authorized_keys
-   ```
-
-3. **Add Private Key to GitHub Secrets:**
-   - Go to your repository → Settings → Secrets and variables → Actions
-   - Add new secret: `SSH_PRIVATE_KEY`
-   - Value: Contents of `~/.ssh/github_actions_key` (private key)
-
-4. **Test Deployment:**
-   - Go to Actions tab → "Deploy to Ubuntu" → Run workflow
-   - Provide your server details
-
-#### Option B: Simple File Upload
-
-1. **Setup SSH access** (same as Option A)
-2. **Run Simple Deploy workflow** with your server details
-
-### 3. Running the Application
-
-After deployment, you can run the application:
+Useful commands on the VM:
 
 ```bash
-# For simple deployment
-cd /home/ubuntu/hyperliquid-alerts
-./hyperliquid-alerts
+# Runner
+systemctl --user status github-runner.service
+journalctl --user -u github-runner.service -f
 
-# For systemd deployment
-sudo systemctl start hyperliquid-alerts
-sudo systemctl status hyperliquid-alerts
-sudo journalctl -u hyperliquid-alerts -f
+# Bot
+systemctl --user status hyperliquid-alerts.service
+journalctl --user -u hyperliquid-alerts.service -f
+systemctl --user restart hyperliquid-alerts.service
 ```
 
-## Environment Variables
-
-The application expects these environment variables (create a `.env` file):
-
-```bash
-# Telegram Bot Token
-TELEGRAM_BOT_TOKEN=your_bot_token
-
-# Database path
-DATABASE_URL=alerts.db
-
-# Logging level
-RUST_LOG=info
-```
-
-## Troubleshooting
-
-### Build Issues
-- Check that your `Cargo.toml` has the correct target configuration
-- Ensure all dependencies are available for the target platform
-
-### Deployment Issues
-- Verify SSH key is correctly added to GitHub secrets
-- Check that the server user has appropriate permissions
-- Ensure the server is accessible from GitHub Actions runners
-
-### Runtime Issues
-- Check application logs: `sudo journalctl -u hyperliquid-alerts -f`
-- Verify environment variables are set correctly
-- Ensure the database file is accessible and writable
+If the runner ever needs re-registering (e.g. moved to a new host), generate
+a new token from the repo's **Settings → Actions → Runners → New
+self-hosted runner** page and re-run `./config.sh` in `~/actions-runner`.
