@@ -64,8 +64,13 @@ impl AlertService {
             .map_err(|e| e.into())
     }
 
-    pub async fn delete_alert(&self, alert_id: i64) -> crate::Result<()> {
-        self.db.delete_alert(alert_id).await.map_err(|e| e.into())
+    /// Deletes an alert, scoped to the owning chat. Returns `true` if an alert was
+    /// deleted, `false` if no alert with that id exists for this chat.
+    pub async fn delete_alert(&self, chat_id: ChatId, alert_id: i64) -> crate::Result<bool> {
+        self.db
+            .delete_alert(chat_id, alert_id)
+            .await
+            .map_err(|e| e.into())
     }
 
     /// Validate that a coin exists in the Hyperliquid spot market
