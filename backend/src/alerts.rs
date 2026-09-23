@@ -72,11 +72,15 @@ impl AlertService {
         self.subscriptions.lock().await.values().copied().collect()
     }
 
-    pub async fn get_triggered_alerts(&self, mark_px: f64) -> crate::Result<Vec<AlertTable>> {
+    pub async fn get_triggered_alerts(
+        &self,
+        token: &str,
+        mark_px: f64,
+    ) -> crate::Result<Vec<AlertTable>> {
         let lower_alert_price = mark_px * 0.999;
         let upper_alert_price = mark_px * 1.001;
         self.db
-            .get_triggered_alerts(lower_alert_price, upper_alert_price)
+            .get_triggered_alerts(token, lower_alert_price, upper_alert_price)
             .await
             .map_err(|e| e.into())
     }

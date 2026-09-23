@@ -191,14 +191,16 @@ impl Database {
 
     pub async fn get_triggered_alerts(
         &self,
+        token: &str,
         lower_price: f64,
         upper_price: f64,
     ) -> Result<Vec<AlertTable>> {
         let conn_guard = self.conn.lock().await;
-        let mut stmt = conn_guard
-            .prepare("SELECT * FROM alerts WHERE alerted = false AND price BETWEEN ? AND ?")?;
+        let mut stmt = conn_guard.prepare(
+            "SELECT * FROM alerts WHERE alerted = false AND token = ? AND price BETWEEN ? AND ?",
+        )?;
         let alerts = stmt
-            .query_map([lower_price, upper_price], |row| {
+            .query_map(params![token, lower_price, upper_price], |row| {
                 Ok(AlertTable {
                     id: row.get(0)?,
                     public_key: row.get(1)?,
@@ -455,12 +457,39 @@ mod tests {
             .unwrap();
 
         // Test within range (should trigger)
-        let triggered = db.get_triggered_alerts(99.9, 100.1).await.unwrap();
+        let triggered = db.get_triggered_alerts("@1", 99.9, 100.1).await.unwrap();
         assert_eq!(triggered.len(), 1);
 
         // Test outside range (should not trigger)
-        let not_triggered = db.get_triggered_alerts(95.0, 99.0).await.unwrap();
+        let not_triggered = db.get_triggered_alerts("@1", 95.0, 99.0).await.unwrap();
         assert_eq!(not_triggered.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_triggered_alerts_scoped_to_token() {
+        let (db, _temp) = setup_test_db().await;
+
+        // Two different coins with overlapping price targets.
+        db.insert_alert("0x123", ChatId(12345), "BTC", "@1", 100.0)
+            .await
+            .unwrap();
+        db.insert_alert("0x123", ChatId(12345), "ETH", "@2", 100.0)
+            .await
+            .unwrap();
+
+        // A price update for @1 (BTC) must not trigger the @2 (ETH) alert even
+        // though both alerts target the same price.
+        let triggered = db.get_triggered_alerts("@1", 99.9, 100.1).await.unwrap();
+        assert_eq!(triggered.len(), 1);
+        assert_eq!(triggered[0].token, "@1");
+
+        let triggered = db.get_triggered_alerts("@2", 99.9, 100.1).await.unwrap();
+        assert_eq!(triggered.len(), 1);
+        assert_eq!(triggered[0].token, "@2");
+
+        // An update for an unrelated token should trigger neither.
+        let triggered = db.get_triggered_alerts("@3", 99.9, 100.1).await.unwrap();
+        assert_eq!(triggered.len(), 0);
     }
 
     #[tokio::test]
@@ -478,7 +507,7 @@ mod tests {
         db.set_alert_cooldown(alert_id).await.unwrap();
 
         // Alert should not trigger during cooldown (alerted = true)
-        let triggered = db.get_triggered_alerts(49.9, 50.1).await.unwrap();
+        let triggered = db.get_triggered_alerts("@1", 49.9, 50.1).await.unwrap();
         assert_eq!(triggered.len(), 0);
 
         // Verify alert is marked as alerted
