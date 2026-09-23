@@ -31,10 +31,13 @@ The application consists of several key components:
 - `/setalert <coin> <price>` - Create a new price alert
   - Example: `/setalert HYPE 100.0`
 - `/cronalerts` - View all your scheduled cron alerts
-- `/setcronalert <message>` - Create a daily cron alert at 8am
-  - Example: `/setcronalert Good morning! Check your portfolio.`
+- `/setcronalert <coin> <schedule> <time>` - Create a scheduled price report
+  - `schedule` is `daily` or a weekday name (`monday`, `tuesday`, ...); `time` is `HH:MM` in UTC
+  - Example: `/setcronalert HYPE daily 09:00`
 - `/deletecronalert <id>` - Delete a cron alert by ID
   - Example: `/deletecronalert 1`
+
+Arguments are split on a single space, so paste commands rather than retyping them if your keyboard might add extra spaces.
 
 ### How It Works
 
@@ -46,9 +49,9 @@ The application consists of several key components:
 5. **Auto-reset**: Cooldowns are automatically reset every 5 seconds for future triggers
 
 #### Cron Alerts
-1. **Create a Cron Alert**: Use `/setcronalert` command to schedule a daily alert at 8am
+1. **Create a Cron Alert**: Use `/setcronalert <coin> <schedule> <time>` to schedule a recurring price report (e.g. `/setcronalert HYPE daily 09:00`)
 2. **Scheduled Execution**: The cron worker checks every minute and triggers alerts at the specified time
-3. **Daily Notifications**: You'll receive your scheduled message every day at 8am
+3. **Recurring Notifications**: You'll receive the coin's price on the schedule you chose (daily, or a specific weekday), every time it comes around
 4. **Management**: Use `/cronalerts` to view all your scheduled alerts and `/deletecronalert` to remove them
 
 ## Configuration
