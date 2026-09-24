@@ -37,6 +37,35 @@ pub enum Command {
     DeleteCronAlert { id: i64 },
 }
 
+/// Whether `word` (a command as typed, lowercased, without the leading '/' or any
+/// `@botname` suffix) is one of ours. Used to decide whether a slash-command that
+/// failed to parse was meant for this bot (worth a helpful reply) or for some other
+/// bot/command in the chat (stay silent).
+pub fn is_known_command_word(word: &str) -> bool {
+    let word = word.to_lowercase();
+    // BotCommand::command keeps its leading '/' (it's built from `{prefix}{name}`),
+    // so compare against a re-prefixed word rather than stripping it from bot_commands().
+    word == "ua"
+        || Command::bot_commands()
+            .iter()
+            .any(|c| c.command == format!("/{word}"))
+}
+
+/// Usage hint for a command whose arguments failed to parse, keyed by the command
+/// word as typed. `filter_command` silently drops a message when `Command::parse`
+/// errors - this is shown instead so a wrong argument count/format (e.g. from
+/// `/setcronalert`'s strict single-space split) doesn't fail with zero feedback.
+pub fn usage_hint(command_word: &str) -> &'static str {
+    match command_word.to_lowercase().as_str() {
+        "setalert" | "ua" => "Usage: /setalert <coin> <price>\nExample: /setalert HYPE 25.50",
+        "setcronalert" => {
+            "Usage: /setcronalert <coin> <schedule> <time>\nExample: /setcronalert HYPE daily 09:00\n(schedule: 'daily' or a weekday name like 'monday'; time is HH:MM, UTC)"
+        }
+        "deletecronalert" => "Usage: /deletecronalert <id>\nExample: /deletecronalert 3",
+        _ => "Use /help to see all commands, or /menu for a guided, step-by-step flow.",
+    }
+}
+
 #[derive(Clone)]
 pub struct NotificationService {
     alert_service: AlertService,
@@ -249,5 +278,51 @@ impl NotificationService {
         )
         .await?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_is_known_command_word_matches_primary_names() {
+        assert!(is_known_command_word("setcronalert"));
+        assert!(is_known_command_word("setalert"));
+        assert!(is_known_command_word("deletecronalert"));
+        assert!(is_known_command_word("help"));
+    }
+
+    #[test]
+    fn test_is_known_command_word_matches_alias() {
+        assert!(is_known_command_word("ua"));
+    }
+
+    #[test]
+    fn test_is_known_command_word_is_case_insensitive() {
+        assert!(is_known_command_word("SetCronAlert"));
+    }
+
+    #[test]
+    fn test_is_known_command_word_rejects_unrelated_words() {
+        assert!(!is_known_command_word("banana"));
+        assert!(!is_known_command_word("start_other_bot_command"));
+    }
+
+    #[test]
+    fn test_usage_hint_for_setcronalert() {
+        let hint = usage_hint("setcronalert");
+        assert!(hint.contains("/setcronalert <coin> <schedule> <time>"));
+    }
+
+    #[test]
+    fn test_usage_hint_for_setalert_and_alias() {
+        assert!(usage_hint("setalert").contains("/setalert <coin> <price>"));
+        assert!(usage_hint("ua").contains("/setalert <coin> <price>"));
+    }
+
+    #[test]
+    fn test_usage_hint_falls_back_for_unknown_word() {
+        assert!(usage_hint("banana").contains("/help"));
     }
 }

@@ -3,7 +3,7 @@ use backend::{
     alerts::AlertService,
     cron::CronService,
     db::Database,
-    notification::{Command, NotificationService},
+    notification::{Command, NotificationService, is_known_command_word, usage_hint},
 };
 use cron_parser::parse;
 use hyperliquid_rust_sdk::{BaseUrl, InfoClient};
@@ -12,7 +12,8 @@ use std::sync::Arc;
 use teloxide::dispatching::{UpdateFilterExt, UpdateHandler};
 use teloxide::dptree;
 use teloxide::prelude::*;
-use teloxide::types::Update;
+use teloxide::types::{Me, Update};
+use teloxide::utils::command::BotCommands;
 use tokio::sync::Mutex;
 use tokio::sync::mpsc::unbounded_channel;
 
@@ -25,6 +26,46 @@ fn schema() -> UpdateHandler<Box<dyn std::error::Error + Send + Sync + 'static>>
              cmd: Command,
              notification_service: NotificationService| async move {
                 notification_service.handle_command(bot, msg, cmd).await?;
+                Ok(())
+            },
+        );
+
+    // filter_command silently drops a message whose command word matches one of ours
+    // but whose arguments fail to parse (wrong count - e.g. from the strict
+    // single-space split, or a group chat's auto-appended `@botname` not matching
+    // this bot's username) - Command::parse's error is discarded via `.ok()` inside
+    // it. Catch that case here and tell the user what went wrong instead of the bot
+    // going silent.
+    let invalid_command_handler = Update::filter_message()
+        .filter_map(|msg: teloxide::types::Message, me: Me| {
+            let text = msg.text()?;
+            if !text.starts_with('/') {
+                return None;
+            }
+            let word = text
+                .split_whitespace()
+                .next()?
+                .trim_start_matches('/')
+                .split('@')
+                .next()
+                .unwrap_or("")
+                .to_string();
+            if !is_known_command_word(&word) {
+                return None;
+            }
+            let bot_name = me.user.username.clone().unwrap_or_default();
+            match Command::parse(text, &bot_name) {
+                Ok(_) => None,
+                Err(e) => Some((word, e.to_string())),
+            }
+        })
+        .endpoint(
+            |bot: Bot, msg: teloxide::types::Message, (word, error): (String, String)| async move {
+                bot.send_message(
+                    msg.chat.id,
+                    format!("❌ {}\n\n{}", error, usage_hint(&word)),
+                )
+                .await?;
                 Ok(())
             },
         );
@@ -52,6 +93,7 @@ fn schema() -> UpdateHandler<Box<dyn std::error::Error + Send + Sync + 'static>>
 
     dptree::entry()
         .branch(command_handler)
+        .branch(invalid_command_handler)
         .branch(callback_handler)
         .branch(text_handler)
 }
